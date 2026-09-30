@@ -184,6 +184,10 @@ ListenTo-Subtitle-Editor/
 .\Start.cmd --self-test
 ```
 
+## 问题记录
+
+已发现问题的原因、修复提交、验证结果和模型改进计划见 [问题汇总记录](docs/问题汇总.md)。后续进度在 [GitHub 汇总 Issue #1](https://github.com/AtomBoyC/ListenTo-Subtitle-Editor/issues/1) 中跟踪。
+
 ## 使用的项目
 
 - [OpenAI Whisper](https://github.com/openai/whisper)：语音识别模型。
