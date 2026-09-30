@@ -185,5 +185,269 @@ class LegacyArgosValidationTests(unittest.TestCase):
         self.assertEqual(updates[-1].percent, 100)
 
 
+class EmptyModelOutputTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.cache = Path(self.temporary.name) / "cache"
+        package(self.cache / "ja-en" / "1.1")
+        package(self.cache / "en-zh" / "1.1", "en", "zh", vocabulary="shared-json", config=True)
+        self.addCleanup(self.temporary.cleanup)
+        self.calls = []
+        self.updates = []
+
+    def run_model(self, texts, respond, *, cancel_event=None):
+        calls = self.calls
+
+        class Tokenizer:
+            def __init__(self, model_file):
+                pass
+
+            def encode(self, text, out_type=str):
+                return [text]
+
+            def decode_pieces(self, tokens):
+                return " ".join(tokens).replace("▁", " ")
+
+        class Translator:
+            def __init__(self, model_path, **kwargs):
+                self.leg = "ja-en" if "ja-en" in Path(model_path).parts else "en-zh"
+
+            def translate_batch(self, tokens, **kwargs):
+                calls.append((self.leg, tokens[0][0], kwargs))
+                alternatives = respond(self.leg, tokens[0][0], kwargs["num_hypotheses"])
+                return [SimpleNamespace(hypotheses=alternatives)]
+
+            def unload_model(self):
+                pass
+
+        with patch.dict(sys.modules, {"ctranslate2": SimpleNamespace(Translator=Translator),
+                                    "sentencepiece": SimpleNamespace(SentencePieceProcessor=Tokenizer)}), patch.object(
+                offline, "_https_open", side_effect=AssertionError("cached test must not use network")):
+            return offline.translate_texts(texts, "ja", "zh", self.cache, self.updates.append, cancel_event)
+
+    def test_empty_top_candidate_recovers_from_bounded_ranked_alternative(self):
+        def respond(leg, text, count):
+            if leg == "en-zh":
+                self.assertEqual(text, "Hello")
+                return [["你好"]]
+            return [["▁", "▁"]] if count == 1 else [["▁"], ["Hello"], ["Lower ranked"], ["Last"]]
+
+        result = self.run_model(["こんにちは"], respond)
+        self.assertEqual(result, ["你好"])
+        self.assertEqual([call[2]["num_hypotheses"] for call in self.calls], [1, 4, 1])
+        for _, _, arguments in self.calls:
+            self.assertEqual(arguments["beam_size"], 4)
+            self.assertEqual(arguments["length_penalty"], 0.2)
+            self.assertNotIn("min_decoding_length", arguments)
+        self.assertFalse(any(update.stage == "translation_warning" for update in self.updates))
+
+    def test_unusable_candidates_keep_original_and_skip_remaining_pivot(self):
+        result = self.run_model(["こんにちは"], lambda leg, text, count: [["▁"], ["..."], ["!"], [" "]] if count == 4 else [["▁"]])
+        self.assertEqual(result, ["こんにちは"])
+        self.assertEqual([call[0] for call in self.calls], ["ja-en", "ja-en"])
+        warnings = [update for update in self.updates if update.stage == "translation_warning"]
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(warnings[0].message.startswith("片段 1：日语 → 英语"))
+        self.assertIn("最终目标中文未完成", warnings[0].message)
+        self.assertIn("共 1 个片段", warnings[1].message)
+        self.assertEqual(warnings[1].percent, 100)
+
+    def test_second_leg_failure_restores_initial_japanese_not_intermediate_english(self):
+        result = self.run_model(["こんにちは"], lambda leg, text, count: [["Hello"]] if leg == "ja-en" else [["▁"]] * count)
+        self.assertEqual(result, ["こんにちは"])
+        self.assertNotEqual(result, ["Hello"])
+        warnings = [update.message for update in self.updates if update.stage == "translation_warning"]
+        self.assertTrue(warnings[0].startswith("片段 1：英语 → 中文"))
+        self.assertIn("最初原文", warnings[0])
+
+    def test_one_untranslated_fragment_does_not_drop_or_stop_other_fragments(self):
+        def respond(leg, text, count):
+            if leg == "en-zh":
+                return [["我是学生"]]
+            if text == "こんにちは":
+                return [["▁"]] * count
+            return [["I am a student"]]
+
+        result = self.run_model(["こんにちは", "私は学生です"], respond)
+        self.assertEqual(result, ["こんにちは", "我是学生"])
+        self.assertFalse(any(leg == "en-zh" and text == "こんにちは" for leg, text, _ in self.calls))
+        warnings = [update.message for update in self.updates if update.stage == "translation_warning"]
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(warnings[0].startswith("片段 1："))
+        self.assertIn("共 1 个片段", warnings[-1])
+
+    def test_punctuation_only_fragments_are_preserved_without_inference_or_warning(self):
+        originals = ["...", "！？", "♪", " ", "🙂"]
+        result = self.run_model(originals, lambda *args: self.fail("punctuation needs no model"))
+        self.assertEqual(result, originals)
+        self.assertEqual(self.calls, [])
+        self.assertFalse(any(update.stage == "translation_warning" for update in self.updates))
+
+    def test_punctuation_only_candidate_is_not_accepted_for_meaningful_input(self):
+        def respond(leg, text, count):
+            if leg == "en-zh":
+                return [["你好"]]
+            return [["."]] if count == 1 else [["!"], ["Hello"], ["▁"], [" "]]
+
+        result = self.run_model(["こんにちは"], respond)
+        self.assertEqual(result, ["你好"])
+        self.assertEqual([call[2]["num_hypotheses"] for call in self.calls], [1, 4, 1])
+
+    def test_cancellation_after_empty_result_prevents_retry_and_partial_output(self):
+        cancelled = threading.Event()
+
+        def respond(leg, text, count):
+            cancelled.set()
+            return [["▁"]]
+
+        with self.assertRaises(TranscriptionCancelled):
+            self.run_model(["こんにちは"], respond, cancel_event=cancelled)
+        self.assertEqual(len(self.calls), 1)
+        self.assertFalse(any(update.stage == "translation_warning" for update in self.updates))
+
+    def test_cancellation_during_retry_does_not_return_a_fallback_file(self):
+        cancelled = threading.Event()
+
+        def respond(leg, text, count):
+            if count == 4:
+                cancelled.set()
+                return [["Hello"]]
+            return [["▁"]]
+
+        with self.assertRaises(TranscriptionCancelled):
+            self.run_model(["こんにちは"], respond, cancel_event=cancelled)
+        self.assertEqual(len(self.calls), 2)
+        self.assertFalse(any(update.stage == "translation_warning" for update in self.updates))
+
+    def test_model_added_ass_overrides_are_removed_before_next_pivot(self):
+        def respond(leg, text, count):
+            if leg == "ja-en":
+                return [[r"{\fnArial\fs20\bord1\3c&HFFFFFF&}Hello"]]
+            self.assertEqual(text, "Hello")
+            return [["你好"]]
+
+        original = ["こんにちは"]
+        result = self.run_model(original, respond)
+        self.assertEqual(result, ["你好"])
+        self.assertEqual(original, ["こんにちは"])
+        warnings = [update.message for update in self.updates if update.stage == "translation_warning"]
+        self.assertEqual(warnings, ["片段 1：日语 → 英语 已移除模型误加的 ASS 样式标记，译文正文已保留。"])
+
+    def test_last_leg_model_added_override_keeps_chinese_body_and_warns(self):
+        result = self.run_model(["こんにちは"], lambda leg, text, count: [["Hello"]] if leg == "ja-en" else [[r"{\1c&HFFFFFF&\fnArial}你好{\r}"]])
+        self.assertEqual(result, ["你好"])
+        warnings = [update.message for update in self.updates if update.stage == "translation_warning"]
+        self.assertEqual(warnings, ["片段 1：英语 → 中文 已移除模型误加的 ASS 样式标记，译文正文已保留。"])
+
+    def test_style_only_top_candidate_retries_and_does_not_warn_for_discarded_style(self):
+        def respond(leg, text, count):
+            if leg == "en-zh":
+                return [["你好"]]
+            if count == 1:
+                return [[r"{\fnArial\fs20}"]]
+            return [[r"{\fnArial}"], ["Hello"], ["Other"], ["Last"]]
+
+        self.assertEqual(self.run_model(["こんにちは"], respond), ["你好"])
+        self.assertEqual([call[2]["num_hypotheses"] for call in self.calls], [1, 4, 1])
+        self.assertFalse(any(update.stage == "translation_warning" for update in self.updates))
+
+    def test_selected_retry_candidate_style_cleanup_warns_once_without_untranslated_summary(self):
+        def respond(leg, text, count):
+            if leg == "en-zh":
+                self.assertEqual(text, "Hello")
+                return [["你好"]]
+            return [["▁"]] if count == 1 else [["▁"], [r"{\fs20}Hello"], ["Other"], ["Last"]]
+
+        self.assertEqual(self.run_model(["こんにちは"], respond), ["你好"])
+        warnings = [update.message for update in self.updates if update.stage == "translation_warning"]
+        self.assertEqual(warnings, ["片段 1：日语 → 英语 已移除模型误加的 ASS 样式标记，译文正文已保留。"])
+
+    def test_all_style_only_candidates_fall_back_instead_of_treating_tag_words_as_body(self):
+        result = self.run_model(["こんにちは"], lambda leg, text, count: [[r"{\fnArial\fs20}"]] * count)
+        self.assertEqual(result, ["こんにちは"])
+        warnings = [update.message for update in self.updates if update.stage == "translation_warning"]
+        self.assertEqual(len(warnings), 2)
+        self.assertIn("最终目标中文未完成", warnings[0])
+        self.assertIn("共 1 个片段", warnings[1])
+        self.assertFalse(any("已移除" in warning for warning in warnings))
+
+    def test_plain_braces_html_and_unclosed_override_are_not_silently_removed(self):
+        tokenizer = SimpleNamespace(decode_pieces=lambda tokens: " ".join(tokens))
+        for text in ("{ordinary text}Hello", "<i>Hello</i>", r"{\fnArial Hello", "{\\ not a command}Hello"):
+            with self.subTest(text=text):
+                result, cleaned = offline._decode_candidate(tokenizer, [text], "")
+                self.assertEqual(result, text)
+                self.assertFalse(cleaned)
+
+    def test_kana_only_intermediate_result_retries_before_english_to_chinese(self):
+        def respond(leg, text, count):
+            if leg == "en-zh":
+                self.assertEqual(text, "No")
+                return [["不是"]]
+            return [["いいえ"]] if count == 1 else [["いいえ"], ["No"], ["Other"], ["Last"]]
+
+        self.assertEqual(self.run_model(["違います"], respond), ["不是"])
+        self.assertEqual([call[2]["num_hypotheses"] for call in self.calls], [1, 4, 1])
+        self.assertFalse(any(update.stage == "translation_warning" for update in self.updates))
+
+    def test_kana_only_final_result_retries_to_a_valid_chinese_candidate(self):
+        def respond(leg, text, count):
+            if leg == "ja-en":
+                return [["Hello"]]
+            return [["まだ"]] if count == 1 else [["まだ"], ["你好"], ["Other"], ["Last"]]
+
+        self.assertEqual(self.run_model(["こんにちは"], respond), ["你好"])
+        self.assertEqual([call[2]["num_hypotheses"] for call in self.calls], [1, 1, 4])
+
+    def test_kana_only_candidates_keep_initial_source_with_untranslated_warning(self):
+        result = self.run_model(["元の文章"], lambda leg, text, count: [["カナ"]] * count)
+        self.assertEqual(result, ["元の文章"])
+        self.assertEqual([call[0] for call in self.calls], ["ja-en", "ja-en"])
+        warnings = [update.message for update in self.updates if update.stage == "translation_warning"]
+        self.assertIn("最终目标中文未完成", warnings[0])
+        self.assertIn("共 1 个片段", warnings[-1])
+
+    def test_numbers_and_punctuation_do_not_make_kana_a_target_language_result(self):
+        for text in ("123まだ!", "カタカナ?42", "ｶﾅ...", "かな・42"):
+            with self.subTest(text=text):
+                self.assertFalse(offline._candidate_valid(text, "zh"))
+                self.assertFalse(offline._candidate_valid(text, "en"))
+
+    def test_middle_dot_and_shared_han_are_accepted(self):
+        for text in ("阿莉丝・玛莉", "・中文", "中文", "ABC・42"):
+            with self.subTest(text=text):
+                self.assertTrue(offline._candidate_valid(text, "zh"))
+
+    def test_mixed_proper_name_scripts_are_not_rejected_as_kana_only(self):
+        for text in ("阿莉丝カナ", "Kanaカナ", "한カナ"):
+            with self.subTest(text=text):
+                self.assertTrue(offline._candidate_valid(text, "zh"))
+
+    def test_kana_is_valid_for_a_japanese_target(self):
+        self.assertTrue(offline._candidate_valid("まだ", "ja"))
+        self.assertTrue(offline._candidate_valid("カタカナ", "ja"))
+
+    def test_unicode_private_use_is_invalid_even_with_other_letters(self):
+        for text, language in (("正文\ue000", "zh"), ("Hello\U000f0000", "en"), ("こんにちは\U00100000", "ja")):
+            with self.subTest(language=language):
+                self.assertFalse(offline._candidate_valid(text, language))
+
+    def test_private_use_output_recovers_without_leaking_discarded_style_warning(self):
+        def respond(leg, text, count):
+            if leg == "en-zh":
+                return [["你好"]]
+            return [[r"{\fnArial}" + "\ue000broken"]] if count == 1 else [["\ue000broken"], ["Hello"], ["Other"], ["Last"]]
+
+        self.assertEqual(self.run_model(["こんにちは"], respond), ["你好"])
+        self.assertFalse(any(update.stage == "translation_warning" for update in self.updates))
+
+    def test_private_use_final_candidates_fall_back_to_original_not_english(self):
+        result = self.run_model(["こんにちは"], lambda leg, text, count: [["Hello"]] if leg == "ja-en" else [["\ue000噪声"]] * count)
+        self.assertEqual(result, ["こんにちは"])
+        warnings = [update.message for update in self.updates if update.stage == "translation_warning"]
+        self.assertTrue(warnings[0].startswith("片段 1：英语 → 中文"))
+        self.assertIn("最终目标中文未完成", warnings[0])
+
+
 if __name__ == "__main__":
     unittest.main()

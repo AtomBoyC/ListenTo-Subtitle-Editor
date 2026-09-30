@@ -17,6 +17,7 @@ import stat
 import tempfile
 import threading
 from typing import Callable, Optional
+import unicodedata
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 import uuid
@@ -34,6 +35,10 @@ LANGUAGE_NAMES = {
 _CHUNK = 1024 * 1024
 _MAX_ARCHIVE = 2 * 1024 * 1024 * 1024
 _MAX_EXPANDED = 4 * 1024 * 1024 * 1024
+# The old Japanese model occasionally generates complete ASS override blocks
+# from its training subtitles. Remove only this specific model-output syntax;
+# source tags are protected and rebuilt by the subtitle-file layer.
+_MODEL_ASS_OVERRIDE = re.compile(r"\{\\(?:[1-4]?[A-Za-z])[^{}\r\n]*\}")
 _LOCK = threading.Lock()
 ProgressCallback = Callable[[ProgressUpdate], None]
 
@@ -56,12 +61,50 @@ def _cancel(cancel_event: Optional[threading.Event]) -> None:
         raise TranscriptionCancelled("已取消字幕翻译，未保存字幕文件。")
 
 
-def _notify(progress: Optional[ProgressCallback], message: str, percent=None) -> None:
+def _notify(progress: Optional[ProgressCallback], message: str, percent=None, *, stage="translating") -> None:
     if progress is not None:
         try:
-            progress(ProgressUpdate("translating", message, percent))
+            progress(ProgressUpdate(stage, message, percent))
         except Exception:
             logging.getLogger(__name__).exception("Translation progress callback failed")
+
+
+def _has_words(text: str) -> bool:
+    return any(character.isalnum() for character in text)
+
+
+def _candidate_valid(text: str, target_language: str) -> bool:
+    """Reject empty text and two specific corrupt/copy-through model outputs.
+
+    This is not language detection: shared Han characters and mixed proper names
+    remain valid. Only kana letters without any other alphabetic script fail when
+    the requested leg target is not Japanese. U+30FB is punctuation, not a letter.
+    """
+    if not _has_words(text) or any(unicodedata.category(character) == "Co" for character in text):
+        return False
+    if target_language == "ja":
+        return True
+    kana_found = False
+    other_letter_found = False
+    for character in text:
+        if not character.isalpha():
+            continue
+        name = unicodedata.name(character, "")
+        if any(script in name for script in ("HIRAGANA", "KATAKANA", "HENTAIGANA")):
+            kana_found = True
+        else:
+            other_letter_found = True
+    return not kana_found or other_letter_found
+
+
+def _decode_candidate(tokenizer, output_tokens, prefix: str) -> tuple[str, bool]:
+    if prefix and output_tokens and output_tokens[0] == prefix:
+        output_tokens = output_tokens[1:]
+    translated = " ".join(tokenizer.decode_pieces(output_tokens).replace("▁", " ").split())
+    if prefix and translated.startswith(prefix):
+        translated = translated[len(prefix):].strip()
+    translated, removed = _MODEL_ASS_OVERRIDE.subn("", translated)
+    return " ".join(translated.split()), bool(removed)
 
 
 def _language(value: str) -> str:
@@ -391,6 +434,9 @@ def translate_texts(
 
     A complete local direct/pivot route performs no network requests. The first
     use of a new route fetches the official package index and needed model data.
+    Empty model output gets one bounded retry with up to four ranked candidates.
+    If none contain text, preserve the initial source and report a warning rather
+    than dropping a cue or returning intermediate text as the final language.
     """
     source, target = _language(source_language), _language(target_language)
     _cancel(cancel_event)
@@ -398,6 +444,8 @@ def translate_texts(
         return list(texts)
     if not all(isinstance(text, str) for text in texts):
         raise ValueError("字幕文本必须是字符串列表。")
+    if not any(_has_words(text) for text in texts):
+        return list(texts)
     try:
         import ctranslate2
         import sentencepiece
@@ -427,7 +475,9 @@ def translate_texts(
         for pair in route:
             if pair not in local:
                 local[pair] = _install(pair, available[pair], cache, progress, cancel_event)
+        originals = list(texts)
         result = list(texts)
+        untranslated: set[int] = set()
         total_steps = len(route) * len(texts)
         completed = 0
         for pair in route:
@@ -448,7 +498,7 @@ def translate_texts(
                 converted = []
                 for index, text in enumerate(result):
                     _cancel(cancel_event)
-                    if not text.strip():
+                    if index in untranslated or not _has_words(text):
                         translated = text
                     else:
                         tokens = tokenizer.encode(" ".join(text.split()), out_type=str)
@@ -456,21 +506,47 @@ def translate_texts(
                         if len(tokens) > 4096:
                             raise OfflineTranslationError(f"第 {index + 1} 条字幕过长，请分成更短的句子后再翻译。")
                         kwargs = {"target_prefix": [[prefix]]} if prefix else {}
-                        hypotheses = translator.translate_batch(
-                            [tokens], beam_size=4, num_hypotheses=1,
+                        inference_options = dict(
+                            beam_size=4,
                             replace_unknowns=True, length_penalty=0.2,
                             max_input_length=4096, max_decoding_length=4096,
                             **kwargs,
                         )
+                        hypotheses = translator.translate_batch([tokens], num_hypotheses=1, **inference_options)
                         _cancel(cancel_event)
-                        output_tokens = hypotheses[0].hypotheses[0]
-                        if prefix and output_tokens and output_tokens[0] == prefix:
-                            output_tokens = output_tokens[1:]
-                        translated = " ".join(tokenizer.decode_pieces(output_tokens).replace("▁", " ").split())
-                        if prefix and translated.startswith(prefix):
-                            translated = translated[len(prefix):].strip()
-                        if not translated:
-                            raise OfflineTranslationError(f"第 {index + 1} 条字幕未得到译文，请重试或使用在线翻译。")
+                        translated, removed_style = _decode_candidate(tokenizer, hypotheses[0].hypotheses[0], prefix)
+                        if not _candidate_valid(translated, pair[1]):
+                            # The old Japanese model can rank whitespace-only
+                            # tokens highest for meaningful short phrases. Keep
+                            # the same search parameters and inspect at most four
+                            # ranked candidates; never force a minimum length or
+                            # inject words/context just to make output nonempty.
+                            _cancel(cancel_event)
+                            retry = translator.translate_batch([tokens], num_hypotheses=4, **inference_options)
+                            _cancel(cancel_event)
+                            for output_tokens in retry[0].hypotheses[:4]:
+                                candidate, candidate_removed_style = _decode_candidate(tokenizer, output_tokens, prefix)
+                                if _candidate_valid(candidate, pair[1]):
+                                    translated = candidate
+                                    removed_style = candidate_removed_style
+                                    _notify(progress, f"片段 {index + 1}：{name} 无效译文已使用有效候选恢复。", completed / total_steps * 100)
+                                    break
+                        if not _candidate_valid(translated, pair[1]):
+                            translated = originals[index]
+                            untranslated.add(index)
+                            _notify(
+                                progress,
+                                f"片段 {index + 1}：{name} 模型未返回有效译文，最终目标{LANGUAGE_NAMES[target]}未完成；已保留最初原文。",
+                                completed / total_steps * 100,
+                                stage="translation_warning",
+                            )
+                        elif removed_style:
+                            _notify(
+                                progress,
+                                f"片段 {index + 1}：{name} 已移除模型误加的 ASS 样式标记，译文正文已保留。",
+                                completed / total_steps * 100,
+                                stage="translation_warning",
+                            )
                     converted.append(translated)
                     completed += 1
                     _notify(progress, f"离线翻译 {name}：{index + 1}/{len(result)} 条", completed / total_steps * 100)
@@ -484,6 +560,13 @@ def translate_texts(
                 translator.unload_model()
                 del translator
                 del tokenizer
+        if untranslated:
+            _notify(
+                progress,
+                f"离线翻译结束：共 {len(untranslated)} 个片段未完成目标{LANGUAGE_NAMES[target]}翻译，已保留最初原文。",
+                100,
+                stage="translation_warning",
+            )
         return result
     finally:
         _LOCK.release()

@@ -323,7 +323,7 @@ def translate_segments(
     result = []
     for segment, original_text, translated_text in zip(segments, texts, translated):
         text = _clean_text(translated_text)
-        if options.bilingual:
+        if options.bilingual and text != original_text:
             text = original_text + "\n" + text
         result.append(SubtitleSegment(segment.start_ms, segment.end_ms, text))
     return result

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import subtitle_files as files
-from subtitle_core import SubtitleSegment, TranscriptionCancelled
+from subtitle_core import ProgressUpdate, SubtitleSegment, TranscriptionCancelled
 from translation_core import TranslationOptions
 
 
@@ -161,6 +161,47 @@ class SubtitleFileTests(unittest.TestCase):
         with self.assertRaises(files.SubtitleFileError):
             self.process(self.source(SRT), source_language="../../escape")
         self.assertFalse(self.output.exists())
+
+    def test_translation_warning_maps_fragment_to_original_number_and_persists(self):
+        source = self.source(SRT)
+        events = []
+        summary = "离线翻译结束：共 1 个片段未完成目标中文翻译，已保留最初原文。"
+
+        def fake(segments, *args, progress, **kwargs):
+            progress(ProgressUpdate("translating", "正常翻译进度", 10))
+            progress(ProgressUpdate("translation_warning", "片段 2：英语 → 中文 模型未返回有效译文，最终目标中文未完成；已保留最初原文。", 20))
+            progress(ProgressUpdate("translation_warning", summary, 100))
+            return [replace(cue, text=cue.text if index == 1 else "译文")
+                    for index, cue in enumerate(segments)]
+
+        with patch("translation_core.translate_segments", side_effect=fake):
+            result = files.process_subtitle_file(source, files.SubtitleFileOptions(
+                output_dir=self.output, formats=("srt", "vtt"), source_language="en",
+                translation=TranslationOptions()), progress=events.append)
+        self.assertEqual(sum("已保留最初原文" in warning for warning in result.warnings), 2)
+        self.assertIn("原字幕第 1 条（编号 19）", result.warnings[0])
+        self.assertEqual(result.warnings[1], summary)
+        self.assertIn("正常翻译进度", [event.message for event in events])
+        self.assertIn(result.warnings[0], [event.message for event in events])
+        rendered = result.output_paths["srt"].read_text(encoding="utf-8")
+        self.assertIn("<i>world</i>", rendered)
+        self.assertEqual(len(files.read_subtitle_file(result.output_paths["srt"]).cues), 2)
+
+    def test_kept_original_warning_survives_without_callback_and_no_bilingual_duplicate(self):
+        original = "7\n00:00:01,000 --> 00:00:02,000\nテスト  文\n"
+
+        def fake(segments, *args, progress, **kwargs):
+            progress(ProgressUpdate("translation_warning", "片段 1：日语 → 英语 模型未返回有效译文，最终目标中文未完成；已保留最初原文。", 100))
+            progress(ProgressUpdate("translation_warning", "离线翻译结束：共 1 个片段未完成目标中文翻译，已保留最初原文。", 100))
+            # Translation core normalizes internal whitespace before inference.
+            return [replace(cue, text=" ".join(cue.text.split())) for cue in segments]
+
+        with patch("translation_core.translate_segments", side_effect=fake):
+            result = self.process(self.source(original), source_language="ja",
+                                  translation=TranslationOptions(bilingual=True))
+        self.assertEqual(result.output_paths["srt"].read_text(encoding="utf-8"), original)
+        self.assertEqual(len(result.warnings), 2)
+        self.assertIn("原字幕第 1 条（编号 7）", result.warnings[0])
 
 
 if __name__ == "__main__":

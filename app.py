@@ -58,6 +58,7 @@ class SubtitleApp(tk.Tk):
         self.cancel_event = threading.Event()
         self.running = False
         self.active_task: _TaskSettings | None = None
+        self._translation_incomplete = False
         self.output_files: list[Path] = []
         self.controls = []
         self.input_mode = tk.StringVar(value="字幕文件 · 翻译与格式转换")
@@ -216,6 +217,10 @@ class SubtitleApp(tk.Tk):
         # when the user only meant to scroll. Popup-list scrolling, clicking,
         # and keyboard selection use separate bindings and remain available.
         return "break"
+
+    @staticmethod
+    def _incomplete_translation_summary(message):
+        return isinstance(message, str) and message.startswith("离线翻译结束：") and "未完成目标" in message
 
     def _choose_file(self):
         if self._subtitle_mode():
@@ -388,6 +393,7 @@ class SubtitleApp(tk.Tk):
         self.active_task = task
         self.output_files = []
         self.cancel_event.clear()
+        self._translation_incomplete = False
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
@@ -437,15 +443,18 @@ class SubtitleApp(tk.Tk):
                     self._handle_progress(payload)
                 elif kind == "done":
                     self.output_files = list(payload.output_paths.values())
+                    warnings = tuple(getattr(payload, "warnings", ()) or ())
+                    incomplete = self._translation_incomplete or any(self._incomplete_translation_summary(warning) for warning in warnings)
+                    completion_note = "（部分片段未翻译，已保留原文）" if incomplete else ""
                     self._set_running(False)
                     self.progress.configure(mode="determinate", value=100)
                     output_language = payload.output_language or payload.language
                     if self.active_input_mode == "subtitle":
                         language_label = "原语言" if output_language in ("auto", "unknown", "und") else output_language
-                        self.status.set(f"字幕处理完成 · {payload.segment_count} 条字幕 · 字幕：{language_label} · {len(self.output_files)} 个文件")
+                        self.status.set(f"字幕处理完成{completion_note} · {payload.segment_count} 条字幕 · 字幕：{language_label} · {len(self.output_files)} 个文件")
                     else:
-                        self.status.set(f"生成完成 · 识别语言：{payload.language} · 字幕：{output_language} · {len(self.output_files)} 个文件")
-                    for warning in getattr(payload, "warnings", ()):
+                        self.status.set(f"生成完成{completion_note} · 识别语言：{payload.language} · 字幕：{output_language} · {len(self.output_files)} 个文件")
+                    for warning in warnings:
                         self._append(f"提示：{warning}")
                     for path in self.output_files:
                         self._append(f"已保存：{path}")
@@ -465,6 +474,10 @@ class SubtitleApp(tk.Tk):
 
     def _handle_progress(self, event):
         message = event.message
+        if event.stage == "translation_warning" and self._incomplete_translation_summary(message):
+            # Media results may omit warnings; retain the explicit backend
+            # summary so completion still reports preserved source fragments.
+            self._translation_incomplete = True
         if message:
             display_message = message
             if (self.active_task is not None and self.active_task.translation is not None

@@ -356,9 +356,11 @@ def _translate_document(document: _Document, options: SubtitleFileOptions, progr
     validate_options(translation)
     pieces = []
     requests = []
+    request_cues = []
+    preserved_requests = set()
     warnings = []
     skipped = {"comment": 0, "drawing": 0, "karaoke": 0}
-    for cue in document.cues:
+    for cue_index, cue in enumerate(document.cues, 1):
         _check_cancel(cancel_event)
         special = "comment" if cue.kind == "comment" else "drawing" if cue.drawing else "karaoke" if cue.karaoke else None
         if special:
@@ -384,13 +386,31 @@ def _translate_document(document: _Document, options: SubtitleFileOptions, progr
             content = part.strip()
             request_index = len(requests)
             requests.append(SubtitleSegment(cue.start_ms, cue.end_ms, content))
+            request_cues.append((cue_index, cue.number))
             prepared.append((request_index, part[:left], part[len(part) - right:] if right else ""))
         pieces.append(prepared)
     if requests:
-        returned = translate_segments(requests, source, replace(translation, bilingual=False), progress=progress, cancel_event=cancel_event)
+        def translation_progress(update):
+            if update.stage == "translation_warning":
+                message = update.message
+                fragment = re.match(r"片段 (\d+)：", message)
+                if fragment and 1 <= int(fragment.group(1)) <= len(request_cues):
+                    request_index = int(fragment.group(1)) - 1
+                    if message.endswith("已保留最初原文。"):
+                        preserved_requests.add(request_index)
+                    cue_index, number = request_cues[request_index]
+                    identifier = f"（编号 {number}）" if number else ""
+                    message = f"原字幕第 {cue_index} 条{identifier}：" + message[fragment.end():]
+                    update = replace(update, message=message)
+                warnings.append(message)
+            if progress is not None:
+                progress(update)
+
+        returned = translate_segments(requests, source, replace(translation, bilingual=False), progress=translation_progress, cancel_event=cancel_event)
         if len(returned) != len(requests) or any((item.start_ms, item.end_ms) != (original.start_ms, original.end_ms) for item, original in zip(returned, requests)):
             raise SubtitleFileError("翻译结果条数或时间轴不一致，未生成输出文件。")
-        translated = [item.text for item in returned]
+        translated = [requests[index].text if index in preserved_requests else item.text
+                      for index, item in enumerate(returned)]
         if any(not isinstance(text, str) or not text.strip() or "\n" in text or "\r" in text or "\x00" in text for text in translated):
             raise SubtitleFileError("翻译结果含空白正文或意外换行，未生成输出文件。")
         if any(_PROTECTED.search(text) or any(character in text for character in "{}<>") for text in translated):
@@ -403,7 +423,7 @@ def _translate_document(document: _Document, options: SubtitleFileOptions, progr
             result.append(cue.text)
             continue
         rebuilt = "".join(part if isinstance(part, str) else part[1] + translated[part[0]] + part[2] for part in prepared)
-        if translation.bilingual and any(not isinstance(part, str) for part in prepared):
+        if translation.bilingual and rebuilt != cue.text and any(not isinstance(part, str) for part in prepared):
             rebuilt = cue.text + (r"\N" if document.format in ("ass", "ssa") else "\n") + rebuilt
         result.append(rebuilt)
     for kind, count in skipped.items():

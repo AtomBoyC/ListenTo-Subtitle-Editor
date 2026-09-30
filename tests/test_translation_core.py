@@ -122,6 +122,15 @@ class TranslationBoundaryTests(unittest.TestCase):
                     with self.assertRaises(translation.TranslationError):
                         translation.translate_segments(cues(), "en", translation.TranslationOptions())
 
+    def test_offline_bilingual_kept_original_is_not_duplicated(self):
+        segments = [core.SubtitleSegment(1000, 2000, "テスト"),
+                    core.SubtitleSegment(3000, 4000, "こんにちは")]
+        backend = SimpleNamespace(translate_texts=lambda *args, **kwargs: ["テスト", "你好"])
+        with patch.dict(sys.modules, {"offline_translate": backend}):
+            result = translation.translate_segments(segments, "ja", translation.TranslationOptions(bilingual=True))
+        self.assertEqual([item.text for item in result], ["テスト", "こんにちは\n你好"])
+        self.assertEqual([(item.start_ms, item.end_ms) for item in result], [(1000, 2000), (3000, 4000)])
+
     def test_remote_plain_http_and_credentials_in_url_are_rejected(self):
         invalid = (
             "http://api.example.com/v1", "http://localhost.evil.invalid/v1", "http://0.0.0.0/v1",

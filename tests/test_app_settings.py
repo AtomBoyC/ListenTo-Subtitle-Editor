@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import tkinter as tk
+from types import SimpleNamespace
 from tkinter import ttk
 import unittest
 from unittest.mock import patch
@@ -145,6 +146,57 @@ class AppSettingsTests(unittest.TestCase):
         self.assertNotIn(self.gui.api_key, self.gui.log.get("1.0", "end"))
         self.assertNotIn(self.gui.api_key, repr(self.gui.active_task))
         self.assertTrue(self.gui.api_button.instate(["disabled"]))
+
+    def result(self, warnings=None, include_warnings=True):
+        result = SimpleNamespace(output_paths={"srt": self.root / "result" / "Japanese.zh.srt"},
+                                 language="ja", output_language="zh", segment_count=2)
+        if include_warnings:
+            result.warnings = warnings or ()
+        return result
+
+    def test_incomplete_offline_summary_is_visible_on_completion_and_files_remain_available(self):
+        self.configure_translation()
+        self.start_without_worker()
+        summary = "离线翻译结束：1 个片段未完成目标中文翻译，已保留最初原文。"
+        result = self.result(("第 2 条字幕片段翻译失败，保留原文。", summary))
+        self.gui.events.put(("done", result))
+        self.gui._poll()
+        self.assertIn("部分片段未翻译", self.gui.status.get())
+        self.assertIn("已保留原文", self.gui.status.get())
+        self.assertEqual(self.gui.target.get(), "中文")
+        self.assertEqual(self.gui.output_files, list(result.output_paths.values()))
+        self.assertFalse(self.gui.open_button.instate(["disabled"]))
+        log = self.gui.log.get("1.0", "end")
+        self.assertIn(summary, log)
+        self.assertIn("第 2 条字幕片段", log)
+        self.assertIn("已保存：", log)
+
+    def test_plain_style_warnings_do_not_mark_translation_as_incomplete(self):
+        self.configure_translation()
+        self.start_without_worker()
+        warning = "跨格式转换可能丢失高级样式。"
+        self.gui.events.put(("done", self.result((warning,))))
+        self.gui._poll()
+        self.assertIn("字幕处理完成", self.gui.status.get())
+        self.assertNotIn("未翻译", self.gui.status.get())
+        self.assertIn(warning, self.gui.log.get("1.0", "end"))
+
+    def test_media_completion_without_warning_field_uses_progress_summary_and_next_job_resets_it(self):
+        self.configure_translation()
+        self.start_without_worker()
+        self.gui.active_input_mode = "media"
+        summary = "离线翻译结束：1 个片段未完成目标中文翻译，保留原文。"
+        self.gui.events.put(("progress", ProgressUpdate("translation_warning", summary)))
+        self.gui.events.put(("done", self.result(include_warnings=False)))
+        self.gui._poll()
+        self.assertIn("生成完成", self.gui.status.get())
+        self.assertIn("部分片段未翻译", self.gui.status.get())
+        self.assertIn(summary, self.gui.log.get("1.0", "end"))
+        self.start_without_worker()
+        self.gui.events.put(("done", self.result(include_warnings=False)))
+        self.gui._poll()
+        self.assertNotIn("未翻译", self.gui.status.get())
+        self.assertFalse(self.gui._translation_incomplete)
 
 
 if __name__ == "__main__":
