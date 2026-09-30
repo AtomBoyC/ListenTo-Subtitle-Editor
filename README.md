@@ -30,13 +30,13 @@
 
 ### 2. 下载并启动
 
-可下载 [源码 ZIP](https://github.com/AtomBoyC/subtitle-editor/archive/refs/heads/master.zip)，解压后双击 **`Start.cmd`**。请保留整个项目文件夹。
+可下载 [源码 ZIP](https://github.com/AtomBoyC/ListenTo-Subtitle-Editor/archive/refs/heads/master.zip)，解压后双击 **`Start.cmd`**。请保留整个项目文件夹。
 
 也可以使用 Git：
 
 ```powershell
-git clone https://github.com/AtomBoyC/subtitle-editor.git
-cd subtitle-editor
+git clone https://github.com/AtomBoyC/ListenTo-Subtitle-Editor.git
+cd ListenTo-Subtitle-Editor
 .\Start.cmd
 ```
 
@@ -135,7 +135,7 @@ GUI 默认把结果保存在项目目录下的 `字幕结果/`，也可以自行
 默认目录如下，不随源码上传模型或运行环境：
 
 ```text
-subtitle-editor/
+ListenTo-Subtitle-Editor/
 ├── Start.cmd                # Windows 启动入口
 ├── app.py                   # 中文桌面界面
 ├── subtitle_files.py        # 已有字幕的翻译与转换
