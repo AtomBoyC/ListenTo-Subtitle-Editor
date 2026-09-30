@@ -88,14 +88,44 @@ def _metadata(package_dir: Path, source: str, target: str) -> dict:
         if not isinstance(metadata, dict):
             raise ValueError("invalid metadata")
         if metadata.get("from_code") != source or metadata.get("to_code") != target:
-            raise ValueError("language codes do not match")
+            raise ValueError(
+                f"语言代码不符：需要 {source} → {target}，"
+                f"实际为 {metadata.get('from_code')} → {metadata.get('to_code')}"
+            )
         if metadata.get("type", "translate") != "translate":
             raise ValueError("not a translation model")
         if not (package_dir / "sentencepiece.model").is_file():
             raise _UnsupportedTokenizer("该模型使用其他分词方式，正在尝试 SentencePiece 模型。")
-        for relative in ("model/model.bin", "model/config.json", "sentencepiece.model"):
-            if (package_dir / relative).stat().st_size <= 0:
-                raise ValueError(f"empty model file: {relative}")
+        for relative in ("model/model.bin", "sentencepiece.model"):
+            file = package_dir / relative
+            if not file.is_file():
+                raise ValueError(f"缺少必要模型文件：{relative}")
+            if file.stat().st_size <= 0:
+                raise ValueError(f"必要模型文件为空：{relative}")
+        # CTranslate2 accepts both legacy TXT and current JSON vocabularies.
+        # Argos ja-en 1.1 ships model.bin + shared_vocabulary.txt with no
+        # config.json: CT2 restores its settings from the old model binary.
+        # Requiring a modern config rejects this intact official package.
+        model_dir = package_dir / "model"
+        shared_vocabularies = [model_dir / f"shared_vocabulary.{extension}" for extension in ("json", "txt")]
+        shared = next((file for file in shared_vocabularies if file.is_file()), None)
+        if shared is not None:
+            if shared.stat().st_size <= 0:
+                raise ValueError(f"共享词表为空：{shared.name}")
+        else:
+            for side in ("source", "target"):
+                vocabulary = next((model_dir / f"{side}_vocabulary.{extension}"
+                                   for extension in ("json", "txt")
+                                   if (model_dir / f"{side}_vocabulary.{extension}").is_file()), None)
+                if vocabulary is None or vocabulary.stat().st_size <= 0:
+                    raise ValueError(f"缺少完整的 {side} 模型词表（JSON 或 TXT）。")
+        config_path = model_dir / "config.json"
+        if config_path.exists():
+            config_raw = config_path.read_bytes()
+            if not config_raw or len(config_raw) > _CHUNK:
+                raise ValueError("config.json 为空或超过大小限制。")
+            if not isinstance(json.loads(config_raw.decode("utf-8")), dict):
+                raise ValueError("config.json 必须是 JSON 对象。")
         prefix = metadata.get("target_prefix", "")
         if not isinstance(prefix, str) or len(prefix) > 256:
             raise ValueError("invalid target prefix")
@@ -103,7 +133,7 @@ def _metadata(package_dir: Path, source: str, target: str) -> dict:
     except _UnsupportedTokenizer:
         raise
     except (OSError, ValueError, TypeError, UnicodeError) as exc:
-        raise OfflineTranslationError(f"翻译模型不完整或语言代码不符：{package_dir}") from exc
+        raise OfflineTranslationError(f"翻译模型不完整或格式无效：{package_dir}\n{exc}") from exc
 
 
 def _local_models(cache: Path) -> dict[tuple[str, str], tuple[Path, dict]]:
@@ -383,6 +413,7 @@ def translate_texts(
         _cancel(cancel_event)
         local = _local_models(cache)
         route = _route(source, target, local)
+        available = {}
         if route is None:
             _notify(progress, "正在查询官方离线翻译模型索引……", 0)
             available = _index_models(_read_index(cache, cancel_event))
@@ -391,9 +422,11 @@ def translate_texts(
                 raise OfflineTranslationError(
                     f"官方模型暂时没有 {LANGUAGE_NAMES[source]} → {LANGUAGE_NAMES[target]} 的直接或英文中转路径。"
                 )
-            for pair in route:
-                if pair not in local:
-                    local[pair] = _install(pair, available[pair], cache, progress, cancel_event)
+        route_names = [LANGUAGE_NAMES[route[0][0]], *(LANGUAGE_NAMES[pair[1]] for pair in route)]
+        _notify(progress, f"最终目标：{LANGUAGE_NAMES[target]}；离线翻译路线：{' → '.join(route_names)}", 0)
+        for pair in route:
+            if pair not in local:
+                local[pair] = _install(pair, available[pair], cache, progress, cancel_event)
         result = list(texts)
         total_steps = len(route) * len(texts)
         completed = 0

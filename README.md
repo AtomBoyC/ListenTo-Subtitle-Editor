@@ -72,6 +72,8 @@ GUI 默认把结果保存在项目目录下的 `字幕结果/`，也可以自行
 
 界面和离线翻译支持 **中文、英语、日语、韩语、法语、德语、西班牙语**。部分离线组合通过英语中转，并需缓存两个方向的模型。人名、数字、术语和中转译文需要人工校对。
 
+例如日语译中文使用 **日语 → 英语 → 中文**，首次需要日译英、英译中两个模型。下载提示中的“日语 → 英语”表示其中一步，最终输出仍是中文。开始时日志会记录所选最终目标和完整路线，界面的语言选项不会因鼠标滚轮而切换。离线加载兼容使用 TXT 词表的旧版日语模型。
+
 在线模式点击“API 设置…”，按服务商提供的信息填写基础地址（通常包含 `/v1`）、模型名称和密钥。服务需要按提示返回完整的 JSON 译文，可能按使用量收费。远程地址必须使用 HTTPS；本机 `localhost` 或回环地址允许 HTTP。
 
 界面中的 API 设置只保存在本次运行的内存中，不写入配置文件。字幕原文件和音视频不上传。命令行从 `SUBTITLE_API_KEY` 环境变量读取密钥。
@@ -107,6 +109,12 @@ GUI 默认把结果保存在项目目录下的 `字幕结果/`，也可以自行
 
 ```powershell
 .\.venv\Scripts\python.exe .\subtitle_files.py "input.srt" --source-language en --target-language zh --translation-mode online --api-base-url "https://YOUR_API_HOST/v1" --api-model "YOUR_MODEL" --format srt --output-dir ".\字幕结果"
+```
+
+### 离线日译中，保留 ASS 样式并导出 SRT
+
+```powershell
+.\.venv\Scripts\python.exe .\subtitle_files.py ".\示例\日文样式字幕.ass" --source-language ja --target-language zh --translation-mode offline --format ass srt --output-dir ".\字幕结果"
 ```
 
 ### 从视频生成字幕
@@ -163,9 +171,11 @@ subtitle-editor/
 
 - [英文 SRT 示例](示例/英文字幕.srt)
 - [带样式的 ASS 示例](示例/英文样式字幕.ass)
+- [日语 ASS 示例](示例/日文样式字幕.ass)
+- [实际离线日译中的 SRT](示例/翻译结果/日文样式字幕.zh.srt)
 - [实际离线翻译生成的双语 SRT](示例/翻译结果/英文字幕.en-zh.2.srt)
 
-项目包含 62 项自动化测试，覆盖字幕解析、16 种格式转换路径、标签与时间轴保护、严格编码、文件防覆盖、取消以及在线接口校验。在线测试使用本机模拟服务，不调用收费 API；另外已验证实际离线英译中和 GUI 启动。
+项目的自动化测试覆盖字幕解析、16 种格式转换路径、标签与时间轴保护、严格编码、文件防覆盖、取消、离线新旧模型布局、语言选择保护以及在线接口校验。在线测试使用本机模拟服务，不调用收费 API；另外已验证实际离线英译中、日译中和 GUI 启动。
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v

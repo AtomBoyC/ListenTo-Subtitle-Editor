@@ -8,6 +8,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -30,6 +31,22 @@ TARGETS = {"不翻译 · 原语言": None, **{label: code for label, code in LAN
 BACKENDS = {"本地离线翻译": "offline", "在线 AI 翻译": "online"}
 
 
+@dataclass(frozen=True)
+class _TaskSettings:
+    source: Path
+    destination: Path
+    language: str
+    model: str
+    formats: tuple[str, ...]
+    translation: object = field(repr=False)
+    input_mode: str = "subtitle"
+    encoding: str = "auto"
+
+
+def _language_label(code):
+    return next((label for label, value in LANGUAGES.items() if value == code), code)
+
+
 class SubtitleApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -40,6 +57,7 @@ class SubtitleApp(tk.Tk):
         self.events = queue.Queue()
         self.cancel_event = threading.Event()
         self.running = False
+        self.active_task: _TaskSettings | None = None
         self.output_files: list[Path] = []
         self.controls = []
         self.input_mode = tk.StringVar(value="字幕文件 · 翻译与格式转换")
@@ -65,6 +83,10 @@ class SubtitleApp(tk.Tk):
         self.format_controls = {}
         self.status = tk.StringVar(value="选择一个字幕文件，可直接转换格式，也可以翻译。")
         self._build()
+        for control, _ in self.controls:
+            if isinstance(control, ttk.Combobox):
+                for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                    control.bind(sequence, self._block_combobox_wheel, add="+")
         self._refresh_input_mode()
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.after(120, self._poll)
@@ -188,6 +210,13 @@ class SubtitleApp(tk.Tk):
         self.log.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+    @staticmethod
+    def _block_combobox_wheel(event):
+        # TCombobox's default MouseWheel class binding changes its value even
+        # when the user only meant to scroll. Popup-list scrolling, clicking,
+        # and keyboard selection use separate bindings and remain available.
+        return "break"
+
     def _choose_file(self):
         if self._subtitle_mode():
             title = "选择需要翻译或转换格式的字幕文件"
@@ -254,14 +283,16 @@ class SubtitleApp(tk.Tk):
         if TARGETS[self.target.get()] is None:
             self.translation_hint.set("当前保留原语言。选择目标语言后，会翻译字幕并保留起止时间。")
         elif online:
-            self.translation_hint.set("在线模式仅发送字幕文本至你设置的 API；密钥只保存在本次运行的内存中。")
+            self.translation_hint.set(f"最终字幕目标：{self.target.get()}。在线模式仅发送字幕文本至你设置的 API；密钥只保存在本次运行的内存中。")
         else:
-            hint = "首次翻译会下载对应语言模型，之后可离线使用。部分语言通过英语中转。"
+            hint = f"最终字幕目标：{self.target.get()}。首次下载模型后可离线使用。英语中转模型用于中间步骤，最终字幕仍为{self.target.get()}。"
             if self._subtitle_mode():
                 hint += "请准确选择原字幕语言。"
             self.translation_hint.set(hint)
 
     def _api_settings(self):
+        if self.running:
+            return
         dialog = tk.Toplevel(self)
         dialog.title("在线翻译设置")
         dialog.geometry("610x390")
@@ -330,10 +361,15 @@ class SubtitleApp(tk.Tk):
             messagebox.showwarning("选择保存位置", "请设置字幕保存目录。", parent=self)
             return
         destination = Path(self.destination.get().strip().strip('"'))
+        # Capture all settings before updating UI state or invoking callbacks.
+        # The worker receives this snapshot rather than reading Tk variables.
+        language = LANGUAGES[self.language.get()]
+        model = MODELS[self.model.get()]
+        encoding = ENCODINGS[self.encoding.get()]
         translation_options = None
         target_language = TARGETS[self.target.get()]
         if target_language:
-            if mode == "subtitle" and LANGUAGES[self.language.get()] == "auto":
+            if mode == "subtitle" and language == "auto":
                 messagebox.showwarning("请选择原字幕语言", "翻译字幕文件时，请在“字幕文件设置”中选择具体的原字幕语言。\n仅转换格式时可以保留“自动检测”。", parent=self)
                 self.notebook.select(self.settings_panel)
                 return
@@ -341,12 +377,15 @@ class SubtitleApp(tk.Tk):
             translation_options = TranslationOptions(backend=BACKENDS[self.backend.get()], target_language=target_language,
                 bilingual=self.bilingual.get(), online_base_url=self.api_base_url, online_model=self.api_model,
                 api_key=self.api_key, model_cache=TRANSLATION_CACHE)
-            if mode != "subtitle" or LANGUAGES[self.language.get()] != target_language:
+            if mode != "subtitle" or language != target_language:
                 try:
                     validate_options(translation_options)
                 except ValueError as error:
                     messagebox.showwarning("翻译设置不完整", str(error), parent=self)
                     return
+        task = _TaskSettings(source, destination, language, model, formats,
+                             translation_options, mode, encoding)
+        self.active_task = task
         self.output_files = []
         self.cancel_event.clear()
         self.log.configure(state="normal")
@@ -356,9 +395,20 @@ class SubtitleApp(tk.Tk):
         self.status.set("正在读取并处理字幕…" if mode == "subtitle" else "正在准备识别模型。首次下载可能需要几分钟…")
         self._append(f"文件：{source.name}")
         self._append("操作：字幕翻译与格式转换" if mode == "subtitle" else "操作：视频 / 音频自动识别")
+        if task.translation is not None:
+            source_label = _language_label(task.language)
+            target_label = _language_label(task.translation.target_language)
+            backend_label = next(label for label, code in BACKENDS.items() if code == task.translation.backend)
+            subtitle_style = "双语字幕" if task.translation.bilingual else "译文字幕"
+            self._append(f"翻译设置：{source_label}（{task.language}） → {target_label}（{task.translation.target_language}） · {backend_label} · {subtitle_style}")
+            if task.translation.backend == "offline" and task.language != task.translation.target_language:
+                self._append(f"最终目标：{target_label}。如需下载英语中转模型，它只用于翻译中间步骤。")
+        else:
+            self._append(f"字幕设置：保持原语言 · 原语言：{_language_label(task.language)}（{task.language}）")
+        self._append("导出格式：" + "、".join(format_name.upper() for format_name in task.formats))
         self._set_running(True)
-        args = (source, destination, LANGUAGES[self.language.get()], MODELS[self.model.get()], formats,
-                translation_options, mode, ENCODINGS[self.encoding.get()])
+        args = (task.source, task.destination, task.language, task.model, task.formats,
+                task.translation, task.input_mode, task.encoding)
         threading.Thread(target=self._worker, args=args, daemon=True).start()
 
     def _worker(self, source, destination, language, model, formats, translation_options=None,
@@ -406,6 +456,8 @@ class SubtitleApp(tk.Tk):
                         self.status.set("已取消。可以重新选择文件并开始。")
                     else:
                         self.status.set("字幕处理失败，详情见下方。" if self.active_input_mode == "subtitle" else "生成失败，详情见下方。")
+                        if self.active_task is not None and self.active_task.translation is not None:
+                            self._append(f"本次最终字幕目标：{_language_label(self.active_task.translation.target_language)}；目标语言选择已保留。")
                         self._append(self._friendly_error(payload))
         except queue.Empty:
             pass
@@ -414,7 +466,11 @@ class SubtitleApp(tk.Tk):
     def _handle_progress(self, event):
         message = event.message
         if message:
-            self.status.set(message)
+            display_message = message
+            if (self.active_task is not None and self.active_task.translation is not None
+                    and event.stage.startswith("translat")):
+                display_message = f"最终字幕：{_language_label(self.active_task.translation.target_language)} · {message}"
+            self.status.set(display_message)
             self._append(message)
         if event.percent is None:
             self.progress.configure(mode="indeterminate")
