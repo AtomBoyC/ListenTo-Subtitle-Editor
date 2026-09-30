@@ -1,0 +1,9 @@
+1
+00:00:00,000 --> 00:00:06,400
+Hello. This is a test of automatic subtitles. The meeting starts at 9 tomorrow morning.
+你好,这是自动字幕测试,明天早上9点开会
+
+2
+00:00:07,280 --> 00:00:09,567
+Please bring your notebook.
+请带上你的笔记本

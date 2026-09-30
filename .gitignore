@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+.cache/
+local_paths.json
+字幕结果/
+work/
+dist/

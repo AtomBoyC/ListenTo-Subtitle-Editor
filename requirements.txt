@@ -1,0 +1,4 @@
+faster-whisper==1.2.1
+av==15.1.0
+sentencepiece==0.2.2
+pysubs2==1.8.0
