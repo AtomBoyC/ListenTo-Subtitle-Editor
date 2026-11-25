@@ -1,17 +1,14 @@
+# 生产服务器 / NAS 一键部署配置（无需克隆源码，单文件即可运行：docker compose up -d）
 services:
   listento-studio:
-    # 若已推送至 Docker Hub，可直接改为 image: atomboyc/listento-subtitle-editor:latest
     image: ${DOCKERHUB_IMAGE:-atomboyc/listento-subtitle-editor:latest}
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: listento-studio
     restart: unless-stopped
     ports:
       - "${PORT:-8765}:8765"
     environment:
       - PORT=8765
-      # 可选：通过环境变量预注入默认 API Key（也可直接在网页右上角界面配置并持久化在 ./data）
+      # 可选：通过环境变量预注入默认 API Key（也可启动后直接在网页右上角界面配置并持久化在 ./data）
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
@@ -21,3 +18,9 @@ services:
       - ./exports:/exports
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

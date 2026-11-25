@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>听见 Studio 2.0 · AI 双语字幕精修工作台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2.0.1" />
+  <link rel="stylesheet" href="/static/styles.css?v=2.1.0" />
 </head>
 <body>
   <div id="app" class="studio-shell">
@@ -438,10 +438,32 @@
         </div>
 
         <div class="modal-footer">
-          <span class="utility-hint">导出文件会触发浏览器下载，并同步备份在项目 <code>exports/</code> 目录</span>
+          <span class="utility-hint" id="export-footer-hint">导出文件会触发下载，并同步保存至本地导出目录</span>
           <div class="footer-right">
             <button class="btn btn-subtle" data-close-modal="modal-export" type="button">关闭</button>
-            <button class="btn btn-primary" id="btn-confirm-export" type="button">立即生成并下载</button>
+            <button class="btn btn-primary" id="btn-confirm-export" type="button">立即生成并导出</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Studio Text Input Prompt (WebKit / WebView2 Native Safe) -->
+    <div class="modal-backdrop" id="modal-prompt" hidden>
+      <div class="modal-card" style="max-width: 480px;">
+        <div class="modal-header">
+          <div>
+            <h2 id="prompt-modal-title">编辑内容</h2>
+          </div>
+          <button class="btn btn-icon" id="btn-prompt-cancel-x" type="button">✕</button>
+        </div>
+        <div class="modal-body">
+          <textarea id="prompt-modal-input" class="textarea-panel" rows="3"></textarea>
+        </div>
+        <div class="modal-footer">
+          <span></span>
+          <div class="footer-right">
+            <button class="btn btn-subtle" id="btn-prompt-cancel" type="button">取消</button>
+            <button class="btn btn-primary" id="btn-prompt-ok" type="button">确定</button>
           </div>
         </div>
       </div>
@@ -451,6 +473,6 @@
     <div class="toast-stack" id="toast-stack"></div>
   </div>
 
-  <script src="/static/app.js?v=2.0.1" defer></script>
+  <script src="/static/app.js?v=2.1.0" defer></script>
 </body>
 </html>

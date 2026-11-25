@@ -4,6 +4,11 @@
 .data
 data
 exports
+build
+dist
+*.spec
+packaging
+desktop.py
 __pycache__
 *.py[cod]
 .DS_Store

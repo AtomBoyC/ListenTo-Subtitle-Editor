@@ -3,18 +3,23 @@
 import json
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from core.config_store import (
+    IS_DESKTOP,
     PROJECTS_DIR,
     PROVIDER_PRESETS,
-    ROOT_DIR,
+    RESOURCE_DIR,
+    _IN_DOCKER,
+    default_exports_dir,
     load_settings,
     resolve_effective_settings,
     save_settings,
@@ -48,9 +53,9 @@ from core.translator import (
     test_api_connection,
 )
 
-STATIC_DIR = ROOT_DIR / "static"
-SAMPLES_DIR = ROOT_DIR / "samples"
-EXPORTS_DIR = Path(os.environ.get("LISTENTO_EXPORTS_DIR", str(ROOT_DIR / "exports")))
+STATIC_DIR = RESOURCE_DIR / "static"
+SAMPLES_DIR = RESOURCE_DIR / "samples"
+EXPORTS_DIR = default_exports_dir()
 
 BUILTIN_SAMPLES: List[Dict[str, str]] = [
     {
@@ -98,13 +103,36 @@ async def health_check() -> Dict[str, str]:
 @app.get("/api/meta")
 async def get_meta() -> Dict[str, Any]:
     settings = load_settings()
+    runtime = "docker" if _IN_DOCKER else ("desktop" if IS_DESKTOP else "local")
     return {
+        "runtime": runtime,
+        "exports_dir": str(EXPORTS_DIR),
         "presets": [p.model_dump() for p in PROVIDER_PRESETS],
         "languages": [{"code": k, "label": v} for k, v in LANGUAGE_LABELS.items()],
         "genres": [{"id": k, "desc": v} for k, v in GENRE_GUIDES.items()],
         "samples": BUILTIN_SAMPLES,
         "settings": to_public_settings(settings).model_dump(),
     }
+
+
+@app.post("/api/desktop/open-exports")
+async def open_exports_folder(request: Request) -> Dict[str, Any]:
+    if _IN_DOCKER:
+        raise HTTPException(status_code=400, detail="服务端容器模式不支持打开宿主机文件夹，请直接通过浏览器下载。")
+    client_host = (request.client.host if request.client else "") or ""
+    if client_host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+        raise HTTPException(status_code=403, detail="仅允许本机桌面会话打开本地目录。")
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(EXPORTS_DIR)])
+        elif sys.platform == "win32":
+            os.startfile(str(EXPORTS_DIR))  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", str(EXPORTS_DIR)])
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"无法打开导出目录：{exc}") from exc
+    return {"ok": True, "path": str(EXPORTS_DIR)}
 
 
 @app.get("/api/settings")

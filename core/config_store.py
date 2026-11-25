@@ -2,16 +2,48 @@
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import List, Optional
 
 from core.models import APISettings, APISettingsPublic, APISettingsUpdate, ProviderPreset
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = Path(os.environ.get("LISTENTO_DATA_DIR", str(ROOT_DIR / ".data")))
+IS_FROZEN = bool(getattr(sys, "frozen", False))
+IS_DESKTOP = IS_FROZEN or os.environ.get("LISTENTO_DESKTOP") == "1"
+_IN_DOCKER = os.environ.get("LISTENTO_IN_DOCKER") == "1"
+
+if IS_FROZEN:
+    RESOURCE_DIR = Path(getattr(sys, "_MEIPASS"))
+else:
+    RESOURCE_DIR = Path(__file__).resolve().parent.parent
+
+ROOT_DIR = RESOURCE_DIR
+
+
+def _default_data_dir() -> Path:
+    if os.environ.get("LISTENTO_DATA_DIR"):
+        return Path(os.environ["LISTENTO_DATA_DIR"]).expanduser()
+    if IS_DESKTOP:
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "ListenToStudio"
+        if sys.platform == "win32":
+            appdata = os.environ.get("APPDATA") or str(Path.home())
+            return Path(appdata) / "ListenToStudio"
+        return Path.home() / ".config" / "listento-studio"
+    return ROOT_DIR / ".data"
+
+
+def default_exports_dir() -> Path:
+    if os.environ.get("LISTENTO_EXPORTS_DIR"):
+        return Path(os.environ["LISTENTO_EXPORTS_DIR"]).expanduser()
+    if IS_DESKTOP:
+        return Path.home() / "Downloads" / "ListenTo-Subtitles"
+    return ROOT_DIR / "exports"
+
+
+DATA_DIR = _default_data_dir()
 SETTINGS_FILE = DATA_DIR / "settings.json"
 PROJECTS_DIR = DATA_DIR / "projects"
-_IN_DOCKER = os.environ.get("LISTENTO_IN_DOCKER") == "1"
 
 PROVIDER_PRESETS: List[ProviderPreset] = [
     ProviderPreset(

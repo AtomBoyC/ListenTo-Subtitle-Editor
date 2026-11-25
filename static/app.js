@@ -103,6 +103,48 @@
     refreshUndoButtons();
   }
 
+  function askStudioPrompt(title, defaultValue = "", placeholder = "") {
+    return new Promise((resolve) => {
+      const modal = $("modal-prompt");
+      const titleEl = $("prompt-modal-title");
+      const inputEl = $("prompt-modal-input");
+      const okBtn = $("btn-prompt-ok");
+      const cancelBtn = $("btn-prompt-cancel");
+      const closeX = $("btn-prompt-cancel-x");
+
+      titleEl.textContent = title;
+      inputEl.value = defaultValue || "";
+      inputEl.placeholder = placeholder || "";
+      modal.hidden = false;
+      requestAnimationFrame(() => {
+        inputEl.focus();
+        inputEl.select();
+      });
+
+      const cleanup = (val) => {
+        modal.hidden = true;
+        okBtn.onclick = null;
+        cancelBtn.onclick = null;
+        closeX.onclick = null;
+        inputEl.onkeydown = null;
+        resolve(val);
+      };
+
+      okBtn.onclick = () => cleanup(inputEl.value);
+      cancelBtn.onclick = () => cleanup(null);
+      closeX.onclick = () => cleanup(null);
+      inputEl.onkeydown = (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cleanup(null);
+        } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+          e.preventDefault();
+          cleanup(inputEl.value);
+        }
+      };
+    });
+  }
+
   function undo() {
     if (!state.doc || !state.undoStack.length) return;
     state.redoStack.push(
@@ -181,6 +223,9 @@
       populateSampleMenus(meta.samples);
       populateProviderPresets(meta.presets);
       refreshApiStatusUI();
+      if (meta.runtime === "desktop" && meta.exports_dir) {
+        $("export-footer-hint").innerHTML = `导出文件将直接保存至：<code>${escapeHtml(meta.exports_dir)}</code>`;
+      }
     } catch (err) {
       toast("无法连接本地后端服务，请检查服务是否已启动。", "error");
     }
@@ -547,8 +592,8 @@
       srcCol.appendChild(srcSpan);
 
       srcCol.addEventListener("click", () => activateCue(cue.id, true));
-      srcCol.addEventListener("dblclick", () => {
-        const edited = window.prompt(`编辑 #${cue.id} 原文：`, cue.source_text);
+      srcCol.addEventListener("dblclick", async () => {
+        const edited = await askStudioPrompt(`编辑 #${cue.id} 原文`, cue.source_text, "输入修改后的原文字幕…");
         if (edited !== null && edited !== cue.source_text) {
           pushUndoSnapshot();
           cue.source_text = edited;
@@ -701,8 +746,13 @@
         closeAllPopovers();
         let customInst = "";
         if (a.key === "custom") {
-          customInst = window.prompt("请输入对该句译文的修改要求（例如：改成敬语 / 保留英文缩写）：", "") || "";
-          if (!customInst.trim()) return;
+          const res = await askStudioPrompt(
+            `#${cue.id} 自定义 AI 精修指令`,
+            "",
+            "例如：改成敬语口吻 / 保留英文专有名词不翻译 / 控制在12个字以内…"
+          );
+          if (!res || !res.trim()) return;
+          customInst = res.trim();
         }
         await runSingleCueRewrite(cue, a.key, customInst);
       });
@@ -1549,12 +1599,33 @@
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.detail || "导出失败");
 
-        for (const f of data.files) {
-          triggerDownload(f.filename, f.content);
+        if (state.meta?.runtime !== "desktop") {
+          for (const f of data.files) {
+            triggerDownload(f.filename, f.content);
+          }
         }
         const box = $("export-result-box");
         box.hidden = false;
-        box.innerHTML = `✅ 已生成并下载 <strong>${data.files.map((x) => escapeHtml(x.filename)).join(", ")}</strong><br><small>同时已备份至本地目录：<code>${escapeHtml(data.exports_dir)}</code></small>`;
+        const canOpenDir = state.meta?.runtime && state.meta.runtime !== "docker";
+        box.innerHTML = `
+          <div>✅ 已成功生成 <strong>${data.files.map((x) => escapeHtml(x.filename)).join(", ")}</strong></div>
+          <div style="margin-top:4px;"><small>保存路径：<code>${escapeHtml(data.exports_dir)}</code></small></div>
+          ${canOpenDir ? `<div style="margin-top:8px;"><button class="btn btn-subtle btn-sm" id="btn-reveal-exports" type="button">📂 打开导出文件夹</button></div>` : ""}
+        `;
+        const revealBtn = $("btn-reveal-exports");
+        if (revealBtn) {
+          revealBtn.onclick = async () => {
+            try {
+              const r = await fetch("/api/desktop/open-exports", { method: "POST" });
+              if (!r.ok) {
+                const ej = await r.json();
+                throw new Error(ej.detail || "打开失败");
+              }
+            } catch (err) {
+              toast(err.message, "error");
+            }
+          };
+        }
         toast(`成功导出 ${data.files.length} 个字幕文件`, "success");
       } catch (err) {
         toast(err.message, "error");

@@ -1,0 +1,101 @@
+name: Build Desktop Apps (Windows & macOS)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional Git tag to publish/update a GitHub Release (e.g. v2.1.0). Leave empty to only build artifacts."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-desktop:
+    name: Build (${{ matrix.target_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_name: Windows-x64
+            os: windows-latest
+            artifact_glob: |
+              dist/ListenTo-Studio.exe
+              dist/ListenTo-Studio-Windows-*.zip
+          - target_name: macOS-AppleSilicon-arm64
+            os: macos-latest
+            artifact_glob: |
+              dist/ListenTo-Studio-macOS-*.dmg
+              dist/ListenTo-Studio-macOS-*.zip
+          - target_name: macOS-Intel-x64
+            os: macos-15-intel
+            artifact_glob: |
+              dist/ListenTo-Studio-macOS-*.dmg
+              dist/ListenTo-Studio-macOS-*.zip
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-desktop.txt
+
+      - name: Run full unit & integration test suite
+        run: python -m unittest discover -s tests -v
+
+      - name: Build & smoke-test native desktop package
+        run: python packaging/build_desktop.py
+
+      - name: Upload desktop package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target_name }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-desktop
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all built desktop installers
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh release-assets
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: "听见 Studio ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }} · Windows / macOS 桌面版与 Docker 部署"
+          generate_release_notes: true
+          body: |
+            ### 📥 桌面客户端下载（解压 / 双击即用，无需安装 Python 环境）
+
+            - **Windows 10 / 11 (64位)**：下载 `ListenTo-Studio.exe`（或 `ListenTo-Studio-Windows-x64.zip`），双击即可直接运行。
+            - **macOS (Apple Silicon M1/M2/M3/M4)**：下载 `ListenTo-Studio-macOS-arm64.dmg`，拖入 `Applications` 即可打开。
+            - **macOS (Intel 芯片)**：下载 `ListenTo-Studio-macOS-x64.dmg`，拖入 `Applications` 即可打开。
+              > 💡 **macOS 首次打开提示**：由于未购买 Apple 付费开发者证书签名，首次打开若提示「无法验证开发者」，可在「系统设置 → 隐私与安全性」底部点击「仍要打开」，或在终端执行一次：`xattr -cr "/Applications/ListenTo Studio.app"`。
+
+            ### 🐳 服务器 Docker Compose 一键部署
+
+            镜像地址：`atomboyc/listento-subtitle-editor:latest`（支持 `amd64` + `arm64`）
+          files: release-assets/*

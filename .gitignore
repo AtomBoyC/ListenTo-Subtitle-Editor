@@ -4,4 +4,10 @@ __pycache__/
 .data/
 data/
 exports/
+build/
+dist/
+*.spec
+packaging/icon.png
+packaging/icon.ico
+packaging/icon.icns
 .DS_Store

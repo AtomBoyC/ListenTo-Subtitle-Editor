@@ -1,0 +1,6 @@
+# 本地从源码构建 Docker 镜像配置：docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+services:
+  listento-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
