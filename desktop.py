@@ -154,7 +154,7 @@ def main() -> int:
             import webview  # type: ignore
 
             window = webview.create_window(
-                title="听见 Studio 2.4 · AI 双语字幕精修与语音识别工作台",
+                title="听见 Studio 2.5 · AI 双语字幕工作台",
                 url=base_url,
                 width=1380,
                 height=880,

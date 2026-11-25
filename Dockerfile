@@ -3,7 +3,7 @@ FROM python:3.12-slim
 LABEL org.opencontainers.image.title="ListenTo Studio" \
       org.opencontainers.image.description="Modern AI Bilingual Subtitle Editor, ASR Transcriber & Context-Reflective Translator" \
       org.opencontainers.image.source="https://github.com/AtomBoyC/ListenTo-Subtitle-Editor" \
-      org.opencontainers.image.version="2.4.0"
+      org.opencontainers.image.version="2.5.0"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

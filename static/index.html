@@ -3,171 +3,232 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>听见 Studio 2.4 · AI 双语字幕精修与语音识别工作台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2.4.0" />
+  <title>听见 Studio 2.5 · AI 双语字幕工作台</title>
+  <link rel="stylesheet" href="/static/styles.css?v=2.5.0" />
 </head>
 <body>
+  <!-- ============ Icon Sprite (Lucide-style, offline) ============ -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <defs>
+      <symbol id="i-logo" viewBox="0 0 24 24"><path d="M2 12h3l3-8 4 16 3-8h4"/><path d="M20 12h2"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></symbol>
+      <symbol id="i-film" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.5"/><path d="M7 2v20M17 2v20M2 12h20M2 7h5M2 17h5M17 17h5M17 7h5"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+      <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></symbol>
+      <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/><path d="M5 3v4M19 17v4M3 5h4M17 19h4"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></symbol>
+      <symbol id="i-redo" viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7.5"/><path d="m21 21-4.3-4.3"/></symbol>
+      <symbol id="i-command" viewBox="0 0 24 24"><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5Z" fill="currentColor"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/></symbol>
+      <symbol id="i-skip-back" viewBox="0 0 24 24"><path d="M19 20 9 12l10-8v16Z"/><path d="M5 19V5"/></symbol>
+      <symbol id="i-skip-fwd" viewBox="0 0 24 24"><path d="m5 4 10 8-10 8V4Z"/><path d="M19 5v14"/></symbol>
+      <symbol id="i-languages" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+      <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 10v4M6 6v12M10 3v18M14 8v8M18 5v14M22 10v4"/></symbol>
+      <symbol id="i-panel-right" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></symbol>
+      <symbol id="i-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 18a6 6 0 0 0 0-12v12z" fill="currentColor"/></symbol>
+      <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+      <symbol id="i-split" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18"/><path d="M7 7.5h6M7 16.5h8"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 6.5V12l3.5 2"/></symbol>
+      <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7M5 11l9 9"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="19" cy="12" r="1.2" fill="currentColor"/><circle cx="5" cy="12" r="1.2" fill="currentColor"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+      <symbol id="i-merge" viewBox="0 0 24 24"><path d="m8 6 4-4 4 4"/><path d="M12 2v10.3a4 4 0 0 1-1.17 2.87L4 22M20 22l-5-5"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+      <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.12 8.12 12 12M20 4 8.12 15.88M14.8 14.8 20 20"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></symbol>
+      <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+      <symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></symbol>
+      <symbol id="i-archive" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+      <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/></symbol>
+      <symbol id="i-briefcase" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></symbol>
+      <symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></symbol>
+      <symbol id="i-wand" viewBox="0 0 24 24"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3M5 6v4M19 14v4M10 2v2M7 8H3M21 16h-4M11 3H9"/></symbol>
+      <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="currentColor"/></symbol>
+    </defs>
+  </svg>
+
   <div id="app" class="studio-shell">
-    <!-- Top Studio Header -->
-    <header class="topbar">
-      <div class="topbar-left">
-        <div class="brand">
-          <div class="brand-logo" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M2 12h3l3-8 4 16 3-8h4"/>
-              <rect x="3" y="18" width="18" height="3" rx="1.5" stroke-width="1.8"/>
-            </svg>
-          </div>
-          <div class="brand-text">
-            <span class="brand-title">听见 Studio</span>
-            <span class="brand-badge">v2.4</span>
-          </div>
+    <!-- ============ Title Bar / Menu Bar ============ -->
+    <header class="titlebar">
+      <div class="titlebar-left">
+        <div class="brand" title="听见 Studio">
+          <div class="brand-logo"><svg class="ic"><use href="#i-logo"/></svg></div>
+          <span class="brand-title">听见 Studio</span>
+          <span class="brand-badge">2.5</span>
         </div>
 
-        <div class="divider-v"></div>
+        <nav class="menubar" id="menubar">
+          <!-- File -->
+          <div class="menu" data-menu>
+            <button class="menu-trigger" type="button">文件</button>
+            <div class="menu-pop" hidden>
+              <label class="menu-item" for="subtitle-file-input"><svg class="ic"><use href="#i-file"/></svg><span>打开字幕…</span><kbd>⌘O</kbd></label>
+              <label class="menu-item" for="media-file-input"><svg class="ic"><use href="#i-film"/></svg><span>挂载本地音视频…</span></label>
+              <div class="menu-sep"></div>
+              <button class="menu-item" id="btn-open-asr" type="button"><svg class="ic"><use href="#i-mic"/></svg><span>音视频转字幕 (ASR)…</span></button>
+              <button class="menu-item" id="btn-open-batch" type="button"><svg class="ic"><use href="#i-layers"/></svg><span>多集批量队列…</span></button>
+              <button class="menu-item" id="btn-open-projects" type="button"><svg class="ic"><use href="#i-history"/></svg><span>历史工程…</span></button>
+              <div class="menu-sep"></div>
+              <button class="menu-item" data-click="btn-open-export" type="button"><svg class="ic"><use href="#i-download"/></svg><span>导出字幕…</span><kbd>⌘E</kbd></button>
+              <button class="menu-item" data-click="btn-close-doc" type="button"><svg class="ic"><use href="#i-x"/></svg><span>关闭当前文档</span></button>
+            </div>
+          </div>
+          <!-- Edit -->
+          <div class="menu" data-menu>
+            <button class="menu-trigger" type="button">编辑</button>
+            <div class="menu-pop" hidden>
+              <button class="menu-item" data-click="btn-undo" type="button"><svg class="ic"><use href="#i-undo"/></svg><span>撤销</span><kbd>⌘Z</kbd></button>
+              <button class="menu-item" data-click="btn-redo" type="button"><svg class="ic"><use href="#i-redo"/></svg><span>重做</span><kbd>⇧⌘Z</kbd></button>
+              <div class="menu-sep"></div>
+              <button class="menu-item" data-click="btn-toggle-search" type="button"><svg class="ic"><use href="#i-search"/></svg><span>查找与替换</span><kbd>⌘F</kbd></button>
+              <button class="menu-item" id="btn-time-shift" type="button" disabled><svg class="ic"><use href="#i-clock"/></svg><span>时间轴整体平移…</span></button>
+              <div class="menu-sep"></div>
+              <button class="menu-item danger" id="btn-clear-translations" type="button" disabled><svg class="ic"><use href="#i-eraser"/></svg><span>清空全部译文</span></button>
+            </div>
+          </div>
+          <!-- Tools -->
+          <div class="menu" data-menu>
+            <button class="menu-trigger" type="button">工具</button>
+            <div class="menu-pop" hidden>
+              <button class="menu-item" data-click="btn-translate-all" type="button"><svg class="ic"><use href="#i-sparkles"/></svg><span>AI 全文精翻</span></button>
+              <button class="menu-item" data-click="btn-translate-untranslated" type="button"><svg class="ic"><use href="#i-languages"/></svg><span>仅翻译未完成条目</span></button>
+              <button class="menu-item" data-click="btn-extract-glossary" type="button"><svg class="ic"><use href="#i-book"/></svg><span>AI 提取术语与背景</span></button>
+              <div class="menu-sep"></div>
+              <button class="menu-item" id="btn-open-qa" type="button" disabled><svg class="ic"><use href="#i-shield"/></svg><span>字幕质量体检…</span></button>
+              <button class="menu-item" id="btn-split-bilingual" type="button" disabled><svg class="ic"><use href="#i-split"/></svg><span>双语字幕拆分为双轨</span></button>
+              <div class="menu-sep"></div>
+              <button class="menu-item" data-click="btn-open-settings" type="button"><svg class="ic"><use href="#i-sliders"/></svg><span>AI 引擎设置…</span></button>
+            </div>
+          </div>
+          <!-- View -->
+          <div class="menu" data-menu>
+            <button class="menu-trigger" type="button">视图</button>
+            <div class="menu-pop" hidden>
+              <button class="menu-item" data-click="btn-toggle-sidebar" type="button"><svg class="ic"><use href="#i-panel-right"/></svg><span>显示 / 隐藏右侧面板</span><kbd>⌘\</kbd></button>
+              <button class="menu-item" data-click="btn-toggle-waveform" type="button"><svg class="ic"><use href="#i-wave"/></svg><span>显示 / 隐藏波形时间轴</span></button>
+              <button class="menu-item" id="btn-theme-toggle" type="button"><svg class="ic"><use href="#i-contrast"/></svg><span>切换深色 / 浅色主题</span></button>
+              <div class="menu-sep"></div>
+              <button class="menu-item" data-click="btn-open-cmdk" type="button"><svg class="ic"><use href="#i-command"/></svg><span>命令面板</span><kbd>⌘K</kbd></button>
+              <button class="menu-item" id="btn-open-shortcuts" type="button"><svg class="ic"><use href="#i-keyboard"/></svg><span>键盘快捷键</span><kbd>?</kbd></button>
+            </div>
+          </div>
+          <!-- Samples (populated by JS) -->
+          <div class="menu" id="sample-dropdown" data-menu>
+            <button class="menu-trigger" id="btn-samples" type="button">示例</button>
+            <div class="menu-pop menu-pop-wide" id="sample-menu" hidden></div>
+          </div>
+        </nav>
+      </div>
 
-        <!-- File & Sample Controls -->
-        <label class="btn btn-subtle" for="subtitle-file-input" title="导入 SRT / ASS / SSA / VTT 字幕文件">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          <span>打开字幕</span>
-        </label>
-        <input id="subtitle-file-input" type="file" accept=".srt,.ass,.ssa,.vtt" hidden />
-
-        <button class="btn btn-subtle" id="btn-open-asr" type="button" title="从视频或音频自动识别人声生成时间轴字幕">
-          <span>🎙️ 音视频转字幕</span>
-        </button>
-
-        <button class="btn btn-subtle" id="btn-open-batch" type="button" title="多集字幕批量队列精翻与一键打包导出 ZIP">
-          <span>📚 批量队列</span>
-        </button>
-
-        <button class="btn btn-subtle" id="btn-open-projects" type="button" title="查看与恢复自动保存的历史字幕工程">
-          <span>🗂 历史工程</span>
-        </button>
-
-        <div class="dropdown" id="sample-dropdown">
-          <button class="btn btn-subtle" id="btn-samples" type="button">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            <span>示例字幕</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-          <div class="dropdown-menu" id="sample-menu" hidden></div>
-        </div>
-
-        <label class="btn btn-subtle" for="media-file-input" title="挂载本地视频或音频（零上传延迟，浏览器本地直读同步预览并生成声波）">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><polygon points="10 7 15 10 10 13 10 7"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
-          <span>挂载音视频</span>
-        </label>
-        <input id="media-file-input" type="file" accept="video/*,audio/*,.mkv,.mp4,.webm,.mov,.mp3,.wav,.m4a" hidden />
-
-        <div class="doc-meta-pill" id="doc-meta-pill" hidden>
-          <span class="doc-name" id="doc-filename">untitled.srt</span>
+      <div class="titlebar-center">
+        <div class="doc-tab" id="doc-meta-pill" hidden>
           <span class="doc-tag" id="doc-format-badge">SRT</span>
+          <span class="doc-name" id="doc-filename">untitled.srt</span>
           <span class="doc-save-state" id="doc-save-state">已就绪</span>
-          <button class="doc-close-btn" id="btn-close-doc" type="button" title="关闭当前文档返回欢迎页">✕</button>
+          <button class="doc-close-btn" id="btn-close-doc" type="button" title="关闭当前文档"><svg class="ic"><use href="#i-x"/></svg></button>
         </div>
       </div>
 
-      <div class="topbar-right">
-        <div class="btn-group">
-          <button class="btn btn-icon" id="btn-undo" title="撤销 (Cmd/Ctrl+Z)" disabled>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
-          </button>
-          <button class="btn btn-icon" id="btn-redo" title="重做 (Cmd/Ctrl+Shift+Z)" disabled>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
-          </button>
+      <div class="titlebar-right">
+        <button class="cmdk-trigger" id="btn-open-cmdk" type="button" title="命令面板 (⌘/Ctrl + K)">
+          <svg class="ic"><use href="#i-search"/></svg>
+          <span>搜索命令…</span>
+          <kbd>⌘K</kbd>
+        </button>
+        <div class="icon-group">
+          <button class="btn btn-ghost btn-icon" id="btn-undo" type="button" title="撤销 (⌘/Ctrl+Z)" disabled><svg class="ic"><use href="#i-undo"/></svg></button>
+          <button class="btn btn-ghost btn-icon" id="btn-redo" type="button" title="重做 (⇧⌘/Ctrl+Z)" disabled><svg class="ic"><use href="#i-redo"/></svg></button>
+          <button class="btn btn-ghost btn-icon" id="btn-toggle-sidebar" type="button" title="显示 / 隐藏右侧面板"><svg class="ic"><use href="#i-panel-right"/></svg></button>
         </div>
-
-        <button class="btn btn-icon" id="btn-open-shortcuts" title="键盘快捷键速查 (?)">
-          <span>⌨</span>
-        </button>
-
-        <button class="btn btn-icon" id="btn-toggle-sidebar" title="收起/展开左侧预览与术语栏">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-        </button>
-
-        <button class="btn btn-icon" id="btn-theme-toggle" title="切换暗色剪辑台 / 亮色模式">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-        </button>
-
-        <button class="btn btn-subtle api-status-btn" id="btn-open-settings" type="button">
+        <button class="engine-pill" id="btn-open-settings" type="button" title="AI 引擎设置">
           <span class="status-dot" id="api-status-dot"></span>
-          <span id="api-status-label">AI 引擎设置</span>
+          <span id="api-status-label">配置 AI 引擎</span>
         </button>
-
         <button class="btn btn-primary" id="btn-open-export" type="button" disabled>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span>无损导出</span>
+          <svg class="ic"><use href="#i-download"/></svg>
+          <span>导出</span>
         </button>
       </div>
+
+      <input id="subtitle-file-input" type="file" accept=".srt,.ass,.ssa,.vtt" hidden />
+      <input id="media-file-input" type="file" accept="video/*,audio/*,.mkv,.mp4,.webm,.mov,.mp3,.wav,.m4a" hidden />
     </header>
 
-    <!-- Translation & Editing Toolbar -->
+    <!-- ============ Toolbar ============ -->
     <section class="toolbar" id="main-toolbar">
       <div class="toolbar-group">
-        <div class="lang-pair-box">
-          <select id="select-source-lang" class="select-compact" aria-label="原字幕语言"></select>
-          <span class="lang-arrow">→</span>
-          <select id="select-target-lang" class="select-compact" aria-label="目标语言"></select>
+        <div class="seg-field lang-pair-box" title="翻译语言对">
+          <svg class="ic ic-muted"><use href="#i-languages"/></svg>
+          <select id="select-source-lang" aria-label="原字幕语言"></select>
+          <svg class="ic ic-xs ic-muted"><use href="#i-arrow-right"/></svg>
+          <select id="select-target-lang" aria-label="目标语言"></select>
         </div>
 
-        <select id="select-trans-mode" class="select-compact" title="选择 AI 翻译策略">
-          <option value="reflective">✨ 反思精翻（直译→审校→地道意译）</option>
-          <option value="fast">⚡ 极速上下文（滑动窗口并发）</option>
-        </select>
+        <div class="seg-field" title="翻译策略">
+          <select id="select-trans-mode">
+            <option value="reflective">反思精翻 · 直译 → 审校 → 意译</option>
+            <option value="fast">极速翻译 · 并发上下文</option>
+          </select>
+        </div>
 
-        <select id="select-genre" class="select-compact" title="视频题材与台词口吻">
-          <option value="general">🎯 通用自然</option>
-          <option value="movie">🎬 影视剧对白</option>
-          <option value="tech">💻 技术演讲/教程</option>
-          <option value="anime">🌸 动漫/番剧/游戏</option>
-          <option value="documentary">🌍 纪录片/科普</option>
-        </select>
+        <div class="seg-field" title="视频题材与台词口吻">
+          <select id="select-genre">
+            <option value="general">通用</option>
+            <option value="movie">影视剧</option>
+            <option value="tech">技术演讲</option>
+            <option value="anime">动漫游戏</option>
+            <option value="documentary">纪录片</option>
+          </select>
+        </div>
+
+        <div class="toolbar-divider"></div>
 
         <button class="btn btn-accent" id="btn-translate-all" type="button" disabled>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>
+          <svg class="ic"><use href="#i-sparkles"/></svg>
           <span id="btn-translate-label">AI 全文精翻</span>
         </button>
-
         <button class="btn btn-danger" id="btn-stop-translate" type="button" hidden>
-          <span>⏹ 停止翻译</span>
+          <svg class="ic"><use href="#i-stop"/></svg>
+          <span>停止</span>
         </button>
-
         <button class="btn btn-subtle" id="btn-translate-untranslated" type="button" disabled title="仅翻译空白未译条目，跳过已编辑行">
           <span>仅译未完成</span>
         </button>
       </div>
 
       <div class="toolbar-group toolbar-right">
-        <button class="btn btn-subtle btn-sm" id="btn-toggle-waveform" type="button" disabled title="展开或收起底部交互式音频波形与可视化打轴条">
-          <span>🌊 波形时间轴</span>
-        </button>
-        <button class="btn btn-subtle btn-sm" id="btn-open-qa" type="button" disabled title="字幕质量体检与时间轴重叠/标点一键修复">
-          <span>🩺 字幕体检</span>
-        </button>
-        <button class="btn btn-subtle btn-sm" id="btn-split-bilingual" type="button" disabled title="将已有双语字幕按上下行拆分为原文与译文双轨">
-          <span>🔀 双语分轨</span>
-        </button>
-        <button class="btn btn-subtle btn-sm" id="btn-time-shift" type="button" disabled title="整体平移字幕时间轴 (±毫秒)">
-          <span>⏱ 时间轴平移</span>
-        </button>
-        <button class="btn btn-subtle btn-sm" id="btn-toggle-search" type="button" disabled title="全文查找与批量替换 (Cmd/Ctrl+F)">
-          <span>🔍 查找替换</span>
-        </button>
-        <button class="btn btn-subtle btn-sm" id="btn-clear-translations" type="button" disabled title="一键清空当前文档所有译文（支持 Cmd/Ctrl+Z 撤销恢复）">
-          <span>🧹 清空译文</span>
-        </button>
-
-        <div class="filter-pills" id="filter-pills">
-          <button class="pill active" data-filter="all" type="button">全部 <span id="count-all">0</span></button>
-          <button class="pill" data-filter="untranslated" type="button">未译 <span id="count-untranslated">0</span></button>
-          <button class="pill" data-filter="translated" type="button">已译 <span id="count-translated">0</span></button>
-          <button class="pill" data-filter="long" type="button" title="语速偏快 (>16字/秒) 或单条超长，建议精简">语速预警 <span id="count-long">0</span></button>
+        <div class="segmented" id="filter-pills">
+          <button class="pill active" data-filter="all" type="button">全部 <span class="pill-count" id="count-all">0</span></button>
+          <button class="pill" data-filter="untranslated" type="button">未译 <span class="pill-count" id="count-untranslated">0</span></button>
+          <button class="pill" data-filter="translated" type="button">已译 <span class="pill-count" id="count-translated">0</span></button>
+          <button class="pill pill-warn" data-filter="long" type="button" title="语速偏快 (>16 字/秒) 或单行过长">预警 <span class="pill-count" id="count-long">0</span></button>
         </div>
+        <div class="toolbar-divider"></div>
+        <button class="btn btn-ghost btn-icon" id="btn-toggle-search" type="button" disabled title="查找与替换 (⌘/Ctrl+F)"><svg class="ic"><use href="#i-search"/></svg></button>
+        <button class="btn btn-ghost btn-icon" id="btn-toggle-waveform" type="button" disabled title="波形时间轴"><svg class="ic"><use href="#i-wave"/></svg></button>
       </div>
     </section>
 
-    <!-- Live Streaming Translation Progress Banner -->
+    <!-- Live Translation Progress -->
     <div class="progress-banner" id="progress-banner" hidden>
       <div class="progress-info">
         <span class="spinner"></span>
@@ -176,54 +237,111 @@
       </div>
       <div class="progress-right">
         <span class="progress-nums" id="progress-nums">0 / 0</span>
-        <div class="progress-track">
-          <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
-        </div>
+        <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width: 0%"></div></div>
       </div>
     </div>
 
-    <!-- Collapsible Search & Replace Bar -->
+    <!-- Search & Replace -->
     <div class="utility-bar" id="search-bar" hidden>
       <div class="utility-row">
+        <svg class="ic ic-muted"><use href="#i-search"/></svg>
         <select id="search-scope" class="select-compact">
-          <option value="target">在「译文」中查找</option>
-          <option value="source">在「原文」中查找</option>
-          <option value="both">在「原文 + 译文」中查找</option>
+          <option value="target">在译文中</option>
+          <option value="source">在原文中</option>
+          <option value="both">原文 + 译文</option>
         </select>
-        <input id="search-input" class="input-compact" type="text" placeholder="输入查找关键词…" />
-        <input id="replace-input" class="input-compact" type="text" placeholder="替换为（仅作用于译文）…" />
-        <button class="btn btn-subtle btn-sm" id="btn-replace-all" type="button">全部替换译文</button>
+        <input id="search-input" class="input-compact" type="text" placeholder="查找…" />
+        <input id="replace-input" class="input-compact" type="text" placeholder="替换为（仅作用于译文）" />
+        <button class="btn btn-subtle btn-sm" id="btn-replace-all" type="button">全部替换</button>
         <span class="utility-hint" id="search-match-count"></span>
-        <button class="btn btn-icon btn-sm" id="btn-close-search" type="button">✕</button>
+        <button class="btn btn-ghost btn-icon btn-sm utility-close" id="btn-close-search" type="button" title="关闭"><svg class="ic"><use href="#i-x"/></svg></button>
       </div>
     </div>
 
-    <!-- Collapsible Time Shift Bar -->
+    <!-- Time Shift -->
     <div class="utility-bar" id="shift-bar" hidden>
       <div class="utility-row">
-        <span class="utility-label">⏱ 时间轴整体偏移（毫秒 ms，正数延后 / 负数提前）：</span>
-        <button class="btn btn-subtle btn-sm" data-shift="-1000" type="button">-1.0s</button>
-        <button class="btn btn-subtle btn-sm" data-shift="-250" type="button">-250ms</button>
+        <svg class="ic ic-muted"><use href="#i-clock"/></svg>
+        <span class="utility-label">整体平移时间轴（正数延后，负数提前）</span>
+        <button class="btn btn-subtle btn-sm" data-shift="-1000" type="button">−1s</button>
+        <button class="btn btn-subtle btn-sm" data-shift="-250" type="button">−250ms</button>
         <input id="shift-ms-input" class="input-compact input-num" type="number" value="500" step="50" />
-        <button class="btn btn-subtle btn-sm" id="btn-apply-shift" type="button">应用偏移</button>
+        <button class="btn btn-subtle btn-sm" id="btn-apply-shift" type="button">应用</button>
         <button class="btn btn-subtle btn-sm" data-shift="250" type="button">+250ms</button>
-        <button class="btn btn-subtle btn-sm" data-shift="1000" type="button">+1.0s</button>
-        <button class="btn btn-icon btn-sm" id="btn-close-shift" type="button">✕</button>
+        <button class="btn btn-subtle btn-sm" data-shift="1000" type="button">+1s</button>
+        <button class="btn btn-ghost btn-icon btn-sm utility-close" id="btn-close-shift" type="button" title="关闭"><svg class="ic"><use href="#i-x"/></svg></button>
       </div>
     </div>
 
-    <!-- Main Studio Split Area -->
+    <!-- ============ Workspace ============ -->
     <main class="workspace" id="workspace">
-      <!-- Left Inspector: Cinema Preview Stage + Context/Glossary -->
+      <!-- Main: Cue Editor -->
+      <section class="editor-pane" id="editor-pane">
+        <!-- Welcome -->
+        <div class="welcome-state" id="welcome-state">
+          <div class="welcome-inner">
+            <div class="welcome-hero">
+              <div class="welcome-logo"><svg class="ic"><use href="#i-logo"/></svg></div>
+              <h1>听见 Studio</h1>
+              <p>AI 双语字幕工作台 · 语音识别、上下文精翻、波形打轴与无损导出</p>
+            </div>
+
+            <label class="dropzone" for="subtitle-file-input">
+              <div class="dropzone-icon"><svg class="ic"><use href="#i-upload"/></svg></div>
+              <div class="dropzone-title">拖入字幕、视频或音频，或点击选择文件</div>
+              <div class="dropzone-sub">支持 SRT · ASS · SSA · VTT · MP4 · MOV · MKV · MP3 · WAV · M4A，多份字幕可直接批量拖入</div>
+            </label>
+
+            <div class="welcome-actions">
+              <label class="action-card" for="subtitle-file-input">
+                <div class="action-icon c-indigo"><svg class="ic"><use href="#i-file"/></svg></div>
+                <div class="action-text"><strong>打开字幕</strong><span>编辑与翻译已有字幕</span></div>
+              </label>
+              <button class="action-card" id="btn-welcome-asr" type="button">
+                <div class="action-icon c-cyan"><svg class="ic"><use href="#i-mic"/></svg></div>
+                <div class="action-text"><strong>音视频转字幕</strong><span>Whisper / SenseVoice 识别</span></div>
+              </button>
+              <button class="action-card" id="btn-welcome-batch" type="button">
+                <div class="action-icon c-amber"><svg class="ic"><use href="#i-layers"/></svg></div>
+                <div class="action-text"><strong>多集批量翻译</strong><span>整季队列 + ZIP 打包</span></div>
+              </button>
+            </div>
+
+            <div class="welcome-section" id="welcome-recent-wrap" hidden>
+              <div class="section-title">最近工程</div>
+              <div class="recent-list" id="welcome-recent"></div>
+            </div>
+
+            <div class="welcome-section">
+              <div class="section-title">示例字幕</div>
+              <div class="sample-cards" id="welcome-sample-cards"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="warnings-strip" id="warnings-strip" hidden></div>
+
+        <!-- Cue Table -->
+        <div class="cue-table-wrap" id="cue-table-wrap" hidden>
+          <div class="cue-table-header">
+            <div class="col-meta">#　时间</div>
+            <div class="col-source">原文</div>
+            <div class="col-target">译文</div>
+            <div class="col-actions"></div>
+          </div>
+          <div class="cue-list" id="cue-list"></div>
+        </div>
+      </section>
+
+      <!-- Right: Viewer + Inspector -->
       <aside class="sidebar" id="sidebar">
-        <!-- Video / Simulated Stage Preview Card -->
         <div class="panel preview-panel">
           <div class="panel-header">
-            <span class="panel-title">🎬 实时字幕监看台</span>
-            <div class="preview-mode-pills">
+            <span class="panel-title">监看</span>
+            <div class="segmented segmented-sm">
               <button class="tiny-pill active" data-subview="bilingual" type="button">双语</button>
-              <button class="tiny-pill" data-subview="target" type="button">仅译文</button>
-              <button class="tiny-pill" data-subview="source" type="button">仅原文</button>
+              <button class="tiny-pill" data-subview="target" type="button">译文</button>
+              <button class="tiny-pill" data-subview="source" type="button">原文</button>
             </div>
           </div>
 
@@ -231,12 +349,12 @@
             <video id="media-player" playsinline preload="metadata" hidden></video>
             <div class="stage-placeholder" id="stage-placeholder">
               <div class="stage-grid-bg"></div>
-              <div class="stage-hint">
-                <span>16:9 字幕样式实时预览画布</span>
-                <small>点击任一字幕行预览效果，或拖入本地 MP4/MP3 联动播放</small>
-              </div>
+              <label class="stage-hint" for="media-file-input">
+                <svg class="ic"><use href="#i-film"/></svg>
+                <span>挂载视频或音频</span>
+                <small>本地直读，零上传</small>
+              </label>
             </div>
-            <!-- Floating Bilingual Subtitle Overlay -->
             <div class="subtitle-overlay" id="subtitle-overlay">
               <div class="sub-line-primary" id="overlay-primary"></div>
               <div class="sub-line-secondary" id="overlay-secondary"></div>
@@ -244,146 +362,124 @@
           </div>
 
           <div class="player-controls">
-            <button class="btn btn-icon btn-sm" id="btn-play-toggle" type="button" title="播放 / 暂停 (Ctrl+Space)">
-              <span id="play-icon">▶</span>
-            </button>
+            <button class="btn btn-ghost btn-icon btn-sm" id="btn-prev-cue" type="button" title="上一条"><svg class="ic"><use href="#i-skip-back"/></svg></button>
+            <button class="play-btn" id="btn-play-toggle" type="button" title="播放 / 暂停 (Ctrl+Space)"><span id="play-icon"><svg class="ic"><use href="#i-play"/></svg></span></button>
+            <button class="btn btn-ghost btn-icon btn-sm" id="btn-next-cue" type="button" title="下一条"><svg class="ic"><use href="#i-skip-fwd"/></svg></button>
             <span class="timecode-readout" id="player-timecode">00:00:00.000</span>
             <input type="range" id="player-scrubber" class="scrubber" min="0" max="1000" value="0" />
           </div>
         </div>
 
-        <!-- Context Summary & Glossary Manager Card -->
         <div class="panel context-panel">
           <div class="panel-tabs">
-            <button class="panel-tab active" data-tab="glossary" type="button">📚 术语表 <span class="tab-badge" id="glossary-count">0</span></button>
-            <button class="panel-tab" data-tab="context" type="button">🧠 全片语境与提示词</button>
+            <button class="panel-tab active" data-tab="glossary" type="button"><svg class="ic"><use href="#i-book"/></svg>术语表 <span class="tab-badge" id="glossary-count">0</span></button>
+            <button class="panel-tab" data-tab="context" type="button"><svg class="ic"><use href="#i-message"/></svg>语境与提示词</button>
           </div>
 
-          <!-- Glossary Tab -->
           <div class="tab-body" id="tab-glossary">
-            <div class="glossary-actions">
-              <button class="btn btn-subtle btn-sm full-w" id="btn-extract-glossary" type="button" disabled>
-                ✨ AI 自动扫描全片提取人名/术语表
-              </button>
-            </div>
+            <button class="btn btn-subtle btn-sm full-w" id="btn-extract-glossary" type="button" disabled>
+              <svg class="ic"><use href="#i-sparkles"/></svg><span>AI 扫描全片，提取人名与术语</span>
+            </button>
             <div class="glossary-add-row">
-              <input id="glossary-src-input" class="input-compact" type="text" placeholder="原文词 (如 ListenTo)" />
-              <input id="glossary-tgt-input" class="input-compact" type="text" placeholder="锁定译名 (如 听见)" />
-              <button class="btn btn-subtle btn-sm" id="btn-add-glossary" type="button">添加</button>
+              <input id="glossary-src-input" class="input-compact" type="text" placeholder="原文词" />
+              <input id="glossary-tgt-input" class="input-compact" type="text" placeholder="锁定译名" />
+              <button class="btn btn-subtle btn-sm btn-icon" id="btn-add-glossary" type="button" title="添加"><svg class="ic"><use href="#i-plus"/></svg></button>
             </div>
             <div class="glossary-list" id="glossary-list">
-              <div class="empty-mini">添加专有名词或人名后，AI 全文翻译与单句重翻将严格统一译法。</div>
+              <div class="empty-mini">添加人名或专有名词后，AI 翻译会严格统一译法</div>
             </div>
           </div>
 
-          <!-- Global Context Tab -->
           <div class="tab-body" id="tab-context" hidden>
-            <label class="field-label" for="scene-summary-input">视频背景 / 剧情摘要（AI 提取或手动填写）</label>
-            <textarea id="scene-summary-input" class="textarea-panel" rows="4" placeholder="例如：这是一段关于 AI 软件工程的英文产品发布会演讲，主讲人语气自信自然…"></textarea>
-
-            <label class="field-label" for="custom-prompt-input">额外翻译规范指令（可选）</label>
-            <textarea id="custom-prompt-input" class="textarea-panel" rows="3" placeholder="例如：保留所有代码函数名不翻译；人物对话统一使用口语化表达…"></textarea>
+            <label class="field-label" for="scene-summary-input">视频背景 / 剧情摘要</label>
+            <textarea id="scene-summary-input" class="textarea-panel" rows="4" placeholder="例如：一段关于 AI 软件工程的英文发布会演讲，主讲人语气自信自然…"></textarea>
+            <label class="field-label" for="custom-prompt-input">额外翻译要求（可选）</label>
+            <textarea id="custom-prompt-input" class="textarea-panel" rows="3" placeholder="例如：保留代码函数名不翻译；人物对话统一口语化…"></textarea>
           </div>
         </div>
       </aside>
-
-      <!-- Right Main Bilingual Visual Editor -->
-      <section class="editor-pane" id="editor-pane">
-        <!-- Empty Welcome Dropzone -->
-        <div class="welcome-state" id="welcome-state">
-          <div class="welcome-card">
-            <div class="welcome-icon">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M2 12h3l3-8 4 16 3-8h4"/>
-                <rect x="3" y="18" width="18" height="3" rx="1.5"/>
-              </svg>
-            </div>
-            <h1>欢迎使用 听见 Studio 2.4</h1>
-            <p class="welcome-sub">
-              集 <strong>音视频 AI 转写 + 静音感知动态分批精翻 + 交互波形打轴 + 多集批量导出</strong> 于一体的全流程字幕工作台。
-            </p>
-
-            <div class="welcome-actions">
-              <div class="welcome-btn-row">
-                <label class="btn btn-primary btn-lg" for="subtitle-file-input">
-                  📂 打开字幕文件 (.srt / .ass / .vtt)
-                </label>
-                <button class="btn btn-subtle btn-lg" id="btn-welcome-asr" type="button">
-                  🎙️ 音视频提取生成字幕
-                </button>
-                <button class="btn btn-subtle btn-lg" id="btn-welcome-batch" type="button">
-                  📚 多集批量翻译
-                </button>
-              </div>
-              <span class="welcome-or">或者直接将单份或多份字幕 / 视频 / 音频文件拖入窗口任意位置</span>
-            </div>
-
-            <div class="sample-cards-wrap">
-              <div class="sample-section-title">⚡ 一键加载内置示例体验工作台：</div>
-              <div class="sample-cards" id="welcome-sample-cards"></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Warnings / Notices Strip -->
-        <div class="warnings-strip" id="warnings-strip" hidden></div>
-
-        <!-- Sticky Bilingual Cue Table -->
-        <div class="cue-table-wrap" id="cue-table-wrap" hidden>
-          <div class="cue-table-header">
-            <div class="col-meta"># / 时间轴</div>
-            <div class="col-source">原文 (Source)</div>
-            <div class="col-target">译文精修 (Target · Tab 切换下一行)</div>
-            <div class="col-actions">操作</div>
-          </div>
-          <div class="cue-list" id="cue-list"></div>
-        </div>
-
-        <!-- Interactive Audio Waveform & Draggable Cue Timeline Strip -->
-        <div class="timeline-dock" id="timeline-dock" hidden>
-          <div class="timeline-dock-header">
-            <div class="timeline-dock-left">
-              <span class="timeline-title">🌊 音频波形与可视化打轴条</span>
-              <span class="timeline-hint" id="waveform-status">拖拽色块平移时间 · 拖左右边缘修剪起止点 · 点击空白定位跳转</span>
-            </div>
-            <div class="timeline-dock-right">
-              <div class="zoom-pills" id="waveform-zoom-group" title="时间轴视窗缩放比例">
-                <button class="tiny-pill active" data-wf-zoom="1" type="button">1x (20s)</button>
-                <button class="tiny-pill" data-wf-zoom="2" type="button">2x (10s)</button>
-                <button class="tiny-pill" data-wf-zoom="4" type="button">4x (5s)</button>
-              </div>
-              <button class="btn btn-icon btn-sm" id="btn-close-waveform" type="button" title="收起波形时间轴">✕</button>
-            </div>
-          </div>
-          <div class="waveform-canvas-wrap">
-            <canvas id="waveform-canvas" height="74"></canvas>
-          </div>
-        </div>
-      </section>
     </main>
 
-    <!-- Drag & Drop Fullscreen Overlay -->
-    <div class="drop-overlay" id="drop-overlay" hidden>
-      <div class="drop-box">
-        <div class="drop-title">松开鼠标即可载入文件</div>
-        <div class="drop-desc">支持字幕 (.srt / .ass / .ssa / .vtt) 或本地音视频 (.mp4 / .webm / .mov / .mp3 / .wav)</div>
+    <!-- ============ Waveform Timeline (full width) ============ -->
+    <div class="timeline-dock" id="timeline-dock" hidden>
+      <div class="timeline-dock-header">
+        <div class="timeline-dock-left">
+          <svg class="ic ic-muted"><use href="#i-wave"/></svg>
+          <span class="timeline-title">时间轴</span>
+          <span class="timeline-hint" id="waveform-status">拖动色块平移 · 拖动边缘修剪 · 点击空白处定位</span>
+        </div>
+        <div class="timeline-dock-right">
+          <div class="segmented segmented-sm" id="waveform-zoom-group" title="缩放">
+            <button class="tiny-pill active" data-wf-zoom="1" type="button">20s</button>
+            <button class="tiny-pill" data-wf-zoom="2" type="button">10s</button>
+            <button class="tiny-pill" data-wf-zoom="4" type="button">5s</button>
+          </div>
+          <button class="btn btn-ghost btn-icon btn-sm" id="btn-close-waveform" type="button" title="收起时间轴"><svg class="ic"><use href="#i-chevron-down"/></svg></button>
+        </div>
+      </div>
+      <div class="waveform-canvas-wrap">
+        <canvas id="waveform-canvas" height="74"></canvas>
       </div>
     </div>
 
-    <!-- Modal: AI Engine Settings -->
+    <!-- ============ Status Bar ============ -->
+    <footer class="statusbar" id="statusbar">
+      <div class="statusbar-left">
+        <span class="sb-item" id="sb-stats">未打开文档</span>
+        <span class="sb-item sb-progress" id="sb-progress-wrap" hidden>
+          <span class="sb-progress-track"><span class="sb-progress-fill" id="sb-progress-fill"></span></span>
+          <span id="sb-progress-text">0%</span>
+        </span>
+        <span class="sb-item sb-warn" id="sb-warn" hidden></span>
+      </div>
+      <div class="statusbar-right">
+        <span class="sb-item" id="sb-model"></span>
+        <span class="sb-item sb-hint"><kbd>⌘K</kbd> 命令　<kbd>右键</kbd> 行操作　<kbd>Tab</kbd> 下一行</span>
+      </div>
+    </footer>
+
+    <!-- Drag & Drop Overlay -->
+    <div class="drop-overlay" id="drop-overlay" hidden>
+      <div class="drop-box">
+        <div class="drop-icon"><svg class="ic"><use href="#i-upload"/></svg></div>
+        <div class="drop-title">松开即可载入</div>
+        <div class="drop-desc">字幕 SRT / ASS / SSA / VTT（多份自动进入批量队列）或本地音视频</div>
+      </div>
+    </div>
+
+    <!-- ============ Command Palette ============ -->
+    <div class="cmdk-backdrop" id="cmdk" hidden>
+      <div class="cmdk-panel" role="dialog" aria-label="命令面板">
+        <div class="cmdk-input-row">
+          <svg class="ic ic-muted"><use href="#i-search"/></svg>
+          <input id="cmdk-input" type="text" placeholder="输入命令或搜索功能…" autocomplete="off" spellcheck="false" />
+          <kbd>esc</kbd>
+        </div>
+        <div class="cmdk-list" id="cmdk-list"></div>
+        <div class="cmdk-footer"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>↵</kbd> 执行</span><span><kbd>esc</kbd> 关闭</span></div>
+      </div>
+    </div>
+
+    <!-- Context Menu (cue rows) -->
+    <div class="ctx-menu" id="ctx-menu" hidden></div>
+
+    <!-- ============ Modal: AI Engine Settings ============ -->
     <div class="modal-backdrop" id="modal-settings" hidden>
       <div class="modal-card modal-card-wide">
         <div class="modal-header">
-          <div>
-            <h2>⚙️ AI 翻译引擎设置</h2>
-            <p class="modal-sub">涵盖 13 家主流平台最新模型预设，支持一键从接口实时拉取全部可用模型列表</p>
+          <div class="modal-head-main">
+            <div class="modal-icon"><svg class="ic"><use href="#i-sliders"/></svg></div>
+            <div>
+              <h2>AI 翻译引擎</h2>
+              <p class="modal-sub">13 家主流平台预设，支持从接口实时拉取全部可用模型</p>
+            </div>
           </div>
-          <button class="btn btn-icon" data-close-modal="modal-settings" type="button">✕</button>
+          <button class="btn btn-ghost btn-icon" data-close-modal="modal-settings" type="button"><svg class="ic"><use href="#i-x"/></svg></button>
         </div>
 
         <div class="modal-body">
           <div class="field-group">
-            <label class="field-label">服务商预设（一键填充地址与最新旗舰模型）</label>
+            <label class="field-label">服务商</label>
             <div class="provider-grid" id="provider-grid"></div>
             <p class="provider-hint" id="provider-hint"></p>
           </div>
@@ -394,24 +490,23 @@
               <input id="cfg-base-url" class="input-full" type="text" placeholder="https://api.deepseek.com/v1" />
             </div>
             <div class="field-group">
-              <label class="field-label" for="cfg-api-key">API Key 密钥 <span id="cfg-key-saved-badge" class="saved-badge" hidden>已保存密钥</span></label>
-              <input id="cfg-api-key" class="input-full" type="password" autocomplete="off" placeholder="sk-...（留空则保持已保存密钥）" />
+              <label class="field-label" for="cfg-api-key">API Key <span id="cfg-key-saved-badge" class="saved-badge" hidden>已保存</span></label>
+              <input id="cfg-api-key" class="input-full" type="password" autocomplete="off" placeholder="sk-…（留空则保持已保存的密钥）" />
             </div>
           </div>
 
           <div class="field-group">
-            <label class="field-label" for="cfg-model">模型名称 (Model · 可直接输入任意模型 ID，或点击下方列表选择)</label>
+            <label class="field-label" for="cfg-model">模型</label>
             <div class="model-input-row">
-              <input id="cfg-model" class="input-full" type="text" autocomplete="off" placeholder="例如：deepseek-flash / gpt-6.2-sol / claude-sonnet-5-5 / gemini-3.5-flash" />
-              <button class="btn btn-subtle" id="btn-fetch-models" type="button" title="调用当前 API 的 /models 接口实时获取账号支持的全部模型">
-                🔄 实时拉取可用模型
+              <input id="cfg-model" class="input-full" type="text" autocomplete="off" placeholder="可直接输入任意模型 ID，或从下方选择" />
+              <button class="btn btn-subtle" id="btn-fetch-models" type="button" title="调用 /models 接口获取账号可用模型">
+                <svg class="ic"><use href="#i-refresh"/></svg><span>拉取可用模型</span>
               </button>
             </div>
-
             <div class="model-picker-box" id="model-picker-box">
               <div class="model-picker-top">
                 <span class="model-source-badge" id="model-list-badge">内置推荐模型</span>
-                <input id="cfg-model-filter" class="input-compact model-filter-input" type="text" placeholder="🔍 搜索过滤模型名 (如 flash / pro / qwen / gpt / claude)…" />
+                <input id="cfg-model-filter" class="input-compact model-filter-input" type="text" placeholder="过滤模型名…" />
               </div>
               <div class="model-chip-list" id="model-chip-list"></div>
             </div>
@@ -419,15 +514,15 @@
 
           <div class="form-row-3">
             <div class="field-group">
-              <label class="field-label" for="cfg-batch-size">单批条数 (1~30)</label>
+              <label class="field-label" for="cfg-batch-size">单批条数 <small>1–30</small></label>
               <input id="cfg-batch-size" class="input-full" type="number" min="1" max="30" value="12" />
             </div>
             <div class="field-group">
-              <label class="field-label" for="cfg-context-win">上下文窗口 (0~10)</label>
+              <label class="field-label" for="cfg-context-win">上下文窗口 <small>0–10</small></label>
               <input id="cfg-context-win" class="input-full" type="number" min="0" max="10" value="4" />
             </div>
             <div class="field-group">
-              <label class="field-label" for="cfg-concurrency">并发数 (极速模式)</label>
+              <label class="field-label" for="cfg-concurrency">并发数 <small>极速模式</small></label>
               <input id="cfg-concurrency" class="input-full" type="number" min="1" max="6" value="2" />
             </div>
           </div>
@@ -436,84 +531,87 @@
         </div>
 
         <div class="modal-footer">
-          <button class="btn btn-subtle" id="btn-test-api" type="button">🔌 测试 API 连通性</button>
+          <button class="btn btn-subtle" id="btn-test-api" type="button"><svg class="ic"><use href="#i-plug"/></svg><span>测试连通性</span></button>
           <div class="footer-right">
-            <button class="btn btn-subtle" data-close-modal="modal-settings" type="button">取消</button>
-            <button class="btn btn-primary" id="btn-save-settings" type="button">保存配置</button>
+            <button class="btn btn-ghost" data-close-modal="modal-settings" type="button">取消</button>
+            <button class="btn btn-primary" id="btn-save-settings" type="button">保存</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Modal: Multi-format Lossless Export -->
+    <!-- ============ Modal: Export ============ -->
     <div class="modal-backdrop" id="modal-export" hidden>
       <div class="modal-card">
         <div class="modal-header">
-          <div>
-            <h2>📤 无损导出双语 / 多格式字幕</h2>
-            <p class="modal-sub">支持同时勾选多种格式，自动保留原时间轴、ASS 样式头与定位标签</p>
+          <div class="modal-head-main">
+            <div class="modal-icon"><svg class="ic"><use href="#i-download"/></svg></div>
+            <div>
+              <h2>导出字幕</h2>
+              <p class="modal-sub">保留原时间轴、ASS 样式头与定位标签，可同时导出多种格式</p>
+            </div>
           </div>
-          <button class="btn btn-icon" data-close-modal="modal-export" type="button">✕</button>
+          <button class="btn btn-ghost btn-icon" data-close-modal="modal-export" type="button"><svg class="ic"><use href="#i-x"/></svg></button>
         </div>
 
         <div class="modal-body">
           <div class="field-group">
-            <label class="field-label">字幕轨道排版方式</label>
+            <label class="field-label">排版方式</label>
             <div class="radio-cards" id="export-track-cards">
               <label class="radio-card selected">
                 <input type="radio" name="track_mode" value="bilingual_tgt_top" checked />
-                <div class="rc-title">双语 · 译文在上 / 原文在下（推荐）</div>
-                <div class="rc-desc">符合国内影视/B站/Netflix 观看习惯，ASS 导出自动缩小副语言字号</div>
+                <div class="rc-title">双语 · 译文在上 <span class="rc-tag">推荐</span></div>
+                <div class="rc-desc">国内影视 / B 站观看习惯，ASS 自动缩小副字幕</div>
               </label>
               <label class="radio-card">
                 <input type="radio" name="track_mode" value="bilingual_src_top" />
-                <div class="rc-title">双语 · 原文在上 / 译文在下</div>
-                <div class="rc-desc">适合外语学习与演讲对照场景</div>
+                <div class="rc-title">双语 · 原文在上</div>
+                <div class="rc-desc">适合外语学习与演讲对照</div>
               </label>
               <label class="radio-card">
                 <input type="radio" name="track_mode" value="target_only" />
-                <div class="rc-title">纯译文字幕</div>
-                <div class="rc-desc">仅输出翻译后的目标语言字幕（未译行自动回退原文防空白）</div>
+                <div class="rc-title">仅译文</div>
+                <div class="rc-desc">未译行自动回退原文，避免空白</div>
               </label>
               <label class="radio-card">
                 <input type="radio" name="track_mode" value="source_only" />
-                <div class="rc-title">纯原文字幕（仅转换格式 / 导出校对后时间轴）</div>
-                <div class="rc-desc">不附加译文，快速完成 SRT ↔ ASS ↔ VTT ↔ TXT 跨格式转换</div>
+                <div class="rc-title">仅原文</div>
+                <div class="rc-desc">只做格式转换或导出校对后的时间轴</div>
               </label>
             </div>
           </div>
 
           <div class="field-group">
-            <label class="field-label">导出目标格式（可多选）</label>
+            <label class="field-label">格式</label>
             <div class="format-checks">
-              <label class="fmt-check"><input type="checkbox" value="srt" checked /> <span><strong>SRT</strong> 通用字幕</span></label>
-              <label class="fmt-check"><input type="checkbox" value="ass" /> <span><strong>ASS</strong> 高级双语样式</span></label>
-              <label class="fmt-check"><input type="checkbox" value="vtt" /> <span><strong>VTT</strong> Web 网页播放器</span></label>
-              <label class="fmt-check"><input type="checkbox" value="ssa" /> <span><strong>SSA</strong> 传统样式字幕</span></label>
-              <label class="fmt-check"><input type="checkbox" value="txt" /> <span><strong>TXT</strong> 纯文本文稿</span></label>
+              <label class="fmt-check"><input type="checkbox" value="srt" checked /><span>SRT</span></label>
+              <label class="fmt-check"><input type="checkbox" value="ass" /><span>ASS</span></label>
+              <label class="fmt-check"><input type="checkbox" value="vtt" /><span>VTT</span></label>
+              <label class="fmt-check"><input type="checkbox" value="ssa" /><span>SSA</span></label>
+              <label class="fmt-check"><input type="checkbox" value="txt" /><span>TXT</span></label>
             </div>
           </div>
 
           <div class="form-row-2">
             <div class="field-group">
-              <label class="field-label" for="export-ass-preset">ASS 影院视觉样式预设（SRT/VTT 转 ASS 时生效）</label>
+              <label class="field-label" for="export-ass-preset">ASS 样式预设</label>
               <select id="export-ass-preset" class="input-full">
-                <option value="cinema_outline">经典高清描边（白字深黑边 · 通用推荐）</option>
-                <option value="netflix_box">Netflix 沉浸暗盒（半透黑底 · 复杂画面极清晰）</option>
-                <option value="classic_yellow">美剧经典暖黄（鹅黄主字 + 纯白副字 · 电影感）</option>
-                <option value="tech_cyan">现代极客浅金（清晰高对比 · 技术教程/发布会）</option>
+                <option value="cinema_outline">经典描边 · 白字黑边</option>
+                <option value="netflix_box">Netflix 暗盒 · 半透明底</option>
+                <option value="classic_yellow">美剧暖黄 · 电影感</option>
+                <option value="tech_cyan">极客浅金 · 高对比</option>
               </select>
             </div>
             <div class="field-group">
-              <label class="field-label" for="export-ass-scale">ASS 双语副字幕字号比例：<span id="ass-scale-val">72%</span></label>
-              <input id="export-ass-scale" type="range" min="50" max="100" value="72" class="scrubber" style="margin-top:8px;" />
+              <label class="field-label" for="export-ass-scale">ASS 副字幕字号 <span id="ass-scale-val" class="field-value">72%</span></label>
+              <input id="export-ass-scale" type="range" min="50" max="100" value="72" class="scrubber range-field" />
             </div>
           </div>
 
           <div class="field-group">
             <div class="preview-code-top">
-              <label class="field-label" style="margin:0;">导出文件内容实时预览</label>
-              <button class="btn btn-subtle btn-sm" id="btn-preview-export" type="button">👁 刷新源码预览</button>
+              <label class="field-label" style="margin:0;">内容预览</label>
+              <button class="btn btn-ghost btn-sm" id="btn-preview-export" type="button"><svg class="ic"><use href="#i-refresh"/></svg><span>刷新预览</span></button>
             </div>
             <pre class="code-preview-box" id="export-code-preview" hidden></pre>
           </div>
@@ -522,152 +620,164 @@
         </div>
 
         <div class="modal-footer">
-          <span class="utility-hint" id="export-footer-hint">导出文件会触发下载，并同步保存至本地导出目录</span>
+          <span class="utility-hint" id="export-footer-hint">导出后自动下载，并同步保存到导出目录</span>
           <div class="footer-right">
-            <button class="btn btn-subtle" data-close-modal="modal-export" type="button">关闭</button>
-            <button class="btn btn-primary" id="btn-confirm-export" type="button">立即生成并导出</button>
+            <button class="btn btn-ghost" data-close-modal="modal-export" type="button">关闭</button>
+            <button class="btn btn-primary" id="btn-confirm-export" type="button"><svg class="ic"><use href="#i-download"/></svg><span>导出</span></button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Modal: ASR Audio/Video Transcription -->
+    <!-- ============ Modal: ASR ============ -->
     <div class="modal-backdrop" id="modal-asr" hidden>
       <div class="modal-card modal-card-wide">
         <div class="modal-header">
-          <div>
-            <h2>🎙️ 音视频 AI 语音识别转字幕 (ASR)</h2>
-            <p class="modal-sub">导入 MP4 / MOV / MKV / MP3 / WAV / M4A，自动提取人声生成时间轴字幕并联动挂载预览</p>
+          <div class="modal-head-main">
+            <div class="modal-icon c-cyan"><svg class="ic"><use href="#i-mic"/></svg></div>
+            <div>
+              <h2>音视频转字幕</h2>
+              <p class="modal-sub">识别人声生成带时间轴的字幕，完成后自动载入编辑器并挂载到监看台</p>
+            </div>
           </div>
-          <button class="btn btn-icon" data-close-modal="modal-asr" type="button">✕</button>
+          <button class="btn btn-ghost btn-icon" data-close-modal="modal-asr" type="button"><svg class="ic"><use href="#i-x"/></svg></button>
         </div>
 
         <div class="modal-body">
           <div class="field-group">
-            <label class="field-label">选择语音识别服务预设</label>
+            <label class="field-label">识别服务</label>
             <div class="provider-grid" id="asr-provider-grid"></div>
             <p class="provider-hint" id="asr-provider-hint"></p>
           </div>
 
           <div class="form-row-2">
             <div class="field-group">
-              <label class="field-label" for="asr-base-url">识别接口 Base URL</label>
+              <label class="field-label" for="asr-base-url">接口 Base URL</label>
               <input id="asr-base-url" class="input-full" type="text" placeholder="https://api.siliconflow.cn/v1" />
             </div>
             <div class="field-group">
-              <label class="field-label" for="asr-api-key">识别 API Key <span id="asr-key-saved-badge" class="saved-badge" hidden>已保存</span></label>
-              <input id="asr-api-key" class="input-full" type="password" autocomplete="off" placeholder="留空将自动尝试复用已保存的同平台密钥" />
+              <label class="field-label" for="asr-api-key">API Key <span id="asr-key-saved-badge" class="saved-badge" hidden>已保存</span></label>
+              <input id="asr-api-key" class="input-full" type="password" autocomplete="off" placeholder="留空则复用已保存的同平台密钥" />
             </div>
           </div>
 
           <div class="form-row-2">
             <div class="field-group">
-              <label class="field-label" for="asr-model">语音识别模型 (Model)</label>
+              <label class="field-label" for="asr-model">识别模型</label>
               <input id="asr-model" class="input-full" type="text" placeholder="FunAudioLLM/SenseVoiceSmall" />
-              <div class="model-chip-list" id="asr-model-chips" style="margin-top:5px;"></div>
+              <div class="model-chip-list" id="asr-model-chips" style="margin-top:6px;"></div>
             </div>
             <div class="field-group">
-              <label class="field-label" for="asr-language">音视频原语言</label>
+              <label class="field-label" for="asr-language">原语言</label>
               <select id="asr-language" class="input-full">
-                <option value="auto">自动检测语言 (推荐)</option>
-                <option value="zh">中文 (普通话/粤语)</option>
-                <option value="en">英语 (English)</option>
-                <option value="ja">日语 (Japanese)</option>
-                <option value="ko">韩语 (Korean)</option>
-                <option value="fr">法语 (French)</option>
-                <option value="de">德语 (German)</option>
-                <option value="es">西班牙语 (Spanish)</option>
-                <option value="ru">俄语 (Russian)</option>
+                <option value="auto">自动检测</option>
+                <option value="zh">中文</option>
+                <option value="en">英语</option>
+                <option value="ja">日语</option>
+                <option value="ko">韩语</option>
+                <option value="fr">法语</option>
+                <option value="de">德语</option>
+                <option value="es">西班牙语</option>
+                <option value="ru">俄语</option>
               </select>
             </div>
           </div>
 
           <div class="field-group">
-            <label class="field-label">选择待识别的视频或音频文件</label>
-            <div class="asr-file-box">
-              <label class="btn btn-subtle" for="asr-file-input">📂 选择音视频文件</label>
-              <input id="asr-file-input" type="file" accept="video/*,audio/*,.mp4,.mkv,.mov,.webm,.mp3,.wav,.m4a,.flac" hidden />
-              <span id="asr-file-label" class="utility-hint">尚未选择文件（支持 MP4 / MOV / MP3 / WAV / M4A 等）</span>
-            </div>
+            <label class="field-label">媒体文件</label>
+            <label class="asr-file-box" for="asr-file-input">
+              <svg class="ic"><use href="#i-film"/></svg>
+              <span id="asr-file-label" class="utility-hint">点击选择视频或音频（MP4 / MOV / MKV / MP3 / WAV / M4A）</span>
+            </label>
+            <input id="asr-file-input" type="file" accept="video/*,audio/*,.mp4,.mkv,.mov,.webm,.mp3,.wav,.m4a,.flac" hidden />
           </div>
 
           <div class="test-result-box" id="asr-status-box" hidden></div>
         </div>
 
         <div class="modal-footer">
-          <span class="utility-hint">识别完成后将自动载入双语编辑台，并把该音视频同步挂载到左侧监看台</span>
+          <span class="utility-hint">识别完成后音视频会同步挂载到监看台</span>
           <div class="footer-right">
-            <button class="btn btn-subtle" data-close-modal="modal-asr" type="button">取消</button>
-            <button class="btn btn-primary" id="btn-start-asr" type="button">🚀 开始识别生成字幕</button>
+            <button class="btn btn-ghost" data-close-modal="modal-asr" type="button">取消</button>
+            <button class="btn btn-primary" id="btn-start-asr" type="button"><svg class="ic"><use href="#i-mic"/></svg><span>开始识别</span></button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Modal: Saved Projects History -->
+    <!-- ============ Modal: Projects ============ -->
     <div class="modal-backdrop" id="modal-projects" hidden>
       <div class="modal-card">
         <div class="modal-header">
-          <div>
-            <h2>🗂 历史字幕工程管理</h2>
-            <p class="modal-sub">所有编辑进度、术语表与语境摘要均已自动存档，点击即可随时无缝恢复</p>
+          <div class="modal-head-main">
+            <div class="modal-icon"><svg class="ic"><use href="#i-history"/></svg></div>
+            <div>
+              <h2>历史工程</h2>
+              <p class="modal-sub">编辑进度、术语表与语境摘要均已自动存档</p>
+            </div>
           </div>
-          <button class="btn btn-icon" data-close-modal="modal-projects" type="button">✕</button>
+          <button class="btn btn-ghost btn-icon" data-close-modal="modal-projects" type="button"><svg class="ic"><use href="#i-x"/></svg></button>
         </div>
         <div class="modal-body">
           <div class="project-list" id="project-list"></div>
         </div>
         <div class="modal-footer">
-          <span class="utility-hint">快捷键 <code>Cmd/Ctrl + S</code> 可随时立即保存当前工程快照</span>
+          <span class="utility-hint"><kbd>⌘S</kbd> 随时手动保存</span>
           <div class="footer-right">
-            <button class="btn btn-subtle" data-close-modal="modal-projects" type="button">关闭</button>
+            <button class="btn btn-ghost" data-close-modal="modal-projects" type="button">关闭</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Modal: Subtitle Quality Check & Auto-Fix Doctor -->
+    <!-- ============ Modal: QA ============ -->
     <div class="modal-backdrop" id="modal-qa" hidden>
       <div class="modal-card">
         <div class="modal-header">
-          <div>
-            <h2>🩺 字幕质量体检与自动修复</h2>
-            <p class="modal-sub">检测时间轴重叠、阅读语速超标、漏译行与行尾冗余标点，支持一键修复与定位</p>
+          <div class="modal-head-main">
+            <div class="modal-icon c-emerald"><svg class="ic"><use href="#i-shield"/></svg></div>
+            <div>
+              <h2>字幕质量体检</h2>
+              <p class="modal-sub">检测时间轴重叠、语速超标、漏译与冗余标点</p>
+            </div>
           </div>
-          <button class="btn btn-icon" data-close-modal="modal-qa" type="button">✕</button>
+          <button class="btn btn-ghost btn-icon" data-close-modal="modal-qa" type="button"><svg class="ic"><use href="#i-x"/></svg></button>
         </div>
         <div class="modal-body">
           <div id="qa-report-body" class="qa-report-grid"></div>
         </div>
         <div class="modal-footer">
-          <span class="utility-hint">点击上方任意题号标签可直接跳转定位至对应字幕行</span>
+          <span class="utility-hint">点击编号可跳转到对应字幕</span>
           <div class="footer-right">
-            <button class="btn btn-subtle" data-close-modal="modal-qa" type="button">关闭</button>
-            <button class="btn btn-primary" id="btn-run-qa-fix" type="button">🔧 一键修复重叠与标点规范</button>
+            <button class="btn btn-ghost" data-close-modal="modal-qa" type="button">关闭</button>
+            <button class="btn btn-primary" id="btn-run-qa-fix" type="button"><svg class="ic"><use href="#i-wand"/></svg><span>一键修复重叠与标点</span></button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Modal: Keyboard Shortcuts Cheat Sheet -->
+    <!-- ============ Modal: Shortcuts ============ -->
     <div class="modal-backdrop" id="modal-shortcuts" hidden>
-      <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-card modal-card-sm">
         <div class="modal-header">
-          <div>
-            <h2>⌨️ 键盘快捷键速查</h2>
-            <p class="modal-sub">全程键盘流操作，大幅提升双语字幕精修效率</p>
+          <div class="modal-head-main">
+            <div class="modal-icon"><svg class="ic"><use href="#i-keyboard"/></svg></div>
+            <div><h2>键盘快捷键</h2></div>
           </div>
-          <button class="btn btn-icon" data-close-modal="modal-shortcuts" type="button">✕</button>
+          <button class="btn btn-ghost btn-icon" data-close-modal="modal-shortcuts" type="button"><svg class="ic"><use href="#i-x"/></svg></button>
         </div>
         <div class="modal-body">
           <div class="shortcut-list">
-            <div class="shortcut-row"><span>跳至下一条 / 上一条译文框</span><span><kbd>Tab</kbd> / <kbd>Shift + Tab</kbd></span></div>
-            <div class="shortcut-row"><span>上下切换字幕行并同步定位视频画面</span><span><kbd>Alt + ↑</kbd> / <kbd>Alt + ↓</kbd></span></div>
-            <div class="shortcut-row"><span>对当前焦点行触发 AI 重新精翻润色</span><span><kbd>Alt + Enter</kbd></span></div>
-            <div class="shortcut-row"><span>播放 / 暂停左侧视频或时间轴预览</span><span><kbd>Ctrl + Space</kbd></span></div>
-            <div class="shortcut-row"><span>撤销 / 重做上一步修改</span><span><kbd>Cmd/Ctrl + Z</kbd> / <kbd>Shift + Z</kbd></span></div>
-            <div class="shortcut-row"><span>打开全文查找与批量替换栏</span><span><kbd>Cmd/Ctrl + F</kbd></span></div>
-            <div class="shortcut-row"><span>立即手动保存当前工程进度</span><span><kbd>Cmd/Ctrl + S</kbd></span></div>
+            <div class="shortcut-row"><span>命令面板</span><span><kbd>⌘/Ctrl</kbd><kbd>K</kbd></span></div>
+            <div class="shortcut-row"><span>下一条 / 上一条译文</span><span><kbd>Tab</kbd> / <kbd>⇧</kbd><kbd>Tab</kbd></span></div>
+            <div class="shortcut-row"><span>切换字幕并定位画面</span><span><kbd>Alt</kbd><kbd>↑</kbd> / <kbd>Alt</kbd><kbd>↓</kbd></span></div>
+            <div class="shortcut-row"><span>AI 重翻当前行</span><span><kbd>Alt</kbd><kbd>Enter</kbd></span></div>
+            <div class="shortcut-row"><span>播放 / 暂停</span><span><kbd>Ctrl</kbd><kbd>Space</kbd></span></div>
+            <div class="shortcut-row"><span>撤销 / 重做</span><span><kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd></span></div>
+            <div class="shortcut-row"><span>查找替换</span><span><kbd>⌘/Ctrl</kbd><kbd>F</kbd></span></div>
+            <div class="shortcut-row"><span>打开字幕 / 导出</span><span><kbd>⌘O</kbd> / <kbd>⌘E</kbd></span></div>
+            <div class="shortcut-row"><span>保存工程</span><span><kbd>⌘/Ctrl</kbd><kbd>S</kbd></span></div>
+            <div class="shortcut-row"><span>行操作菜单</span><span><kbd>右键</kbd></span></div>
           </div>
         </div>
         <div class="modal-footer">
@@ -679,93 +789,93 @@
       </div>
     </div>
 
-    <!-- Modal: Studio Text Input Prompt (WebKit / WebView2 Native Safe) -->
+    <!-- ============ Modal: Prompt ============ -->
     <div class="modal-backdrop" id="modal-prompt" hidden>
-      <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-card modal-card-sm">
         <div class="modal-header">
-          <div>
-            <h2 id="prompt-modal-title">编辑内容</h2>
-          </div>
-          <button class="btn btn-icon" id="btn-prompt-cancel-x" type="button">✕</button>
+          <div class="modal-head-main"><h2 id="prompt-modal-title">编辑内容</h2></div>
+          <button class="btn btn-ghost btn-icon" id="btn-prompt-cancel-x" type="button"><svg class="ic"><use href="#i-x"/></svg></button>
         </div>
         <div class="modal-body">
           <textarea id="prompt-modal-input" class="textarea-panel" rows="3"></textarea>
         </div>
         <div class="modal-footer">
-          <span></span>
+          <span class="utility-hint"><kbd>⌘↵</kbd> 确定</span>
           <div class="footer-right">
-            <button class="btn btn-subtle" id="btn-prompt-cancel" type="button">取消</button>
+            <button class="btn btn-ghost" id="btn-prompt-cancel" type="button">取消</button>
             <button class="btn btn-primary" id="btn-prompt-ok" type="button">确定</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Modal: Multi-File Batch Subtitle Queue & ZIP Export -->
+    <!-- ============ Modal: Batch Queue ============ -->
     <div class="modal-backdrop" id="modal-batch" hidden>
       <div class="modal-card modal-card-wide">
         <div class="modal-header">
-          <div>
-            <h2>📚 多集字幕批量队列精翻与一键打包</h2>
-            <p class="modal-sub">一次导入多集剧集/课程字幕，自动复用当前语言对、题材与已启用的术语表顺序精翻，支持一键导出 ZIP 压缩包</p>
+          <div class="modal-head-main">
+            <div class="modal-icon c-amber"><svg class="ic"><use href="#i-layers"/></svg></div>
+            <div>
+              <h2>多集批量队列</h2>
+              <p class="modal-sub">复用当前语言对、题材与术语表依次精翻，完成后一键打包 ZIP</p>
+            </div>
           </div>
-          <button class="btn btn-icon" data-close-modal="modal-batch" type="button">✕</button>
+          <button class="btn btn-ghost btn-icon" data-close-modal="modal-batch" type="button"><svg class="ic"><use href="#i-x"/></svg></button>
         </div>
 
         <div class="modal-body">
           <div class="batch-toolbar">
             <div class="batch-toolbar-left">
-              <label class="btn btn-subtle" for="batch-files-input">📂 选择多份字幕 (.srt / .ass / .vtt)</label>
+              <label class="btn btn-subtle" for="batch-files-input"><svg class="ic"><use href="#i-plus"/></svg><span>添加字幕文件</span></label>
               <input id="batch-files-input" type="file" accept=".srt,.ass,.ssa,.vtt" multiple hidden />
-              <button class="btn btn-subtle btn-sm" id="btn-batch-add-current" type="button">➕ 加入当前打开的字幕</button>
-              <button class="btn btn-subtle btn-sm" id="btn-batch-clear" type="button">🗑 清空队列</button>
+              <button class="btn btn-ghost btn-sm" id="btn-batch-add-current" type="button">加入当前文档</button>
+              <button class="btn btn-ghost btn-sm" id="btn-batch-clear" type="button">清空</button>
             </div>
             <span class="utility-hint" id="batch-summary-text">队列共 0 个文件</span>
           </div>
 
           <div class="form-row-2">
             <div class="field-group">
-              <label class="field-label" for="batch-track-mode">批量导出字幕排版模式</label>
+              <label class="field-label" for="batch-track-mode">排版方式</label>
               <select id="batch-track-mode" class="input-full">
-                <option value="bilingual_tgt_top">双语 · 译文在上 / 原文在下（推荐）</option>
-                <option value="bilingual_src_top">双语 · 原文在上 / 译文在下</option>
-                <option value="target_only">纯译文字幕</option>
-                <option value="source_only">纯原文字幕（批量跨格式转换）</option>
+                <option value="bilingual_tgt_top">双语 · 译文在上（推荐）</option>
+                <option value="bilingual_src_top">双语 · 原文在上</option>
+                <option value="target_only">仅译文</option>
+                <option value="source_only">仅原文（批量转格式）</option>
               </select>
             </div>
             <div class="field-group">
-              <label class="field-label">批量打包目标格式（可多选）</label>
+              <label class="field-label">打包格式</label>
               <div class="format-checks" id="batch-format-checks">
-                <label class="fmt-check"><input type="checkbox" value="srt" checked /> <span><strong>SRT</strong></span></label>
-                <label class="fmt-check"><input type="checkbox" value="ass" /> <span><strong>ASS</strong></span></label>
-                <label class="fmt-check"><input type="checkbox" value="vtt" /> <span><strong>VTT</strong></span></label>
-                <label class="fmt-check"><input type="checkbox" value="txt" /> <span><strong>TXT</strong></span></label>
+                <label class="fmt-check"><input type="checkbox" value="srt" checked /><span>SRT</span></label>
+                <label class="fmt-check"><input type="checkbox" value="ass" /><span>ASS</span></label>
+                <label class="fmt-check"><input type="checkbox" value="vtt" /><span>VTT</span></label>
+                <label class="fmt-check"><input type="checkbox" value="txt" /><span>TXT</span></label>
               </div>
             </div>
           </div>
 
           <div class="batch-queue-list" id="batch-queue-list">
-            <div class="empty-mini">点击上方「📂 选择多份字幕」或直接将多集字幕文件拖入窗口，即可开始队列精翻或批量转格式导出。</div>
+            <div class="empty-mini">添加多份字幕或直接拖入窗口，即可开始队列精翻或批量转格式。</div>
           </div>
 
           <div class="export-result-box" id="batch-export-result" hidden></div>
         </div>
 
         <div class="modal-footer">
-          <button class="btn btn-subtle" id="btn-export-batch-zip" type="button" disabled>📦 一键打包导出 (.zip)</button>
+          <button class="btn btn-subtle" id="btn-export-batch-zip" type="button" disabled><svg class="ic"><use href="#i-archive"/></svg><span>打包导出 ZIP</span></button>
           <div class="footer-right">
-            <button class="btn btn-danger" id="btn-stop-batch" type="button" hidden>⏹ 停止队列</button>
-            <button class="btn btn-subtle" data-close-modal="modal-batch" type="button">关闭</button>
-            <button class="btn btn-primary" id="btn-start-batch" type="button" disabled>🚀 开始队列批量精翻</button>
+            <button class="btn btn-danger" id="btn-stop-batch" type="button" hidden><svg class="ic"><use href="#i-stop"/></svg><span>停止</span></button>
+            <button class="btn btn-ghost" data-close-modal="modal-batch" type="button">关闭</button>
+            <button class="btn btn-primary" id="btn-start-batch" type="button" disabled><svg class="ic"><use href="#i-sparkles"/></svg><span>开始批量精翻</span></button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Toast Container -->
     <div class="toast-stack" id="toast-stack"></div>
   </div>
 
-  <script src="/static/app.js?v=2.4.0" defer></script>
+  <script src="/static/app.js?v=2.5.0" defer></script>
 </body>
 </html>

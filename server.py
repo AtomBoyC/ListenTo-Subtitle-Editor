@@ -109,7 +109,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
-    return {"status": "ok", "version": "2.4.0"}
+    return {"status": "ok", "version": "2.5.0"}
 
 
 @app.get("/api/meta")
@@ -118,7 +118,7 @@ async def get_meta() -> Dict[str, Any]:
     runtime = "docker" if _IN_DOCKER else ("desktop" if IS_DESKTOP else "local")
     return {
         "runtime": runtime,
-        "version": "2.4.0",
+        "version": "2.5.0",
         "exports_dir": str(EXPORTS_DIR),
         "presets": [p.model_dump() for p in PROVIDER_PRESETS],
         "asr_presets": [p.model_dump() for p in get_asr_presets(_IN_DOCKER)],

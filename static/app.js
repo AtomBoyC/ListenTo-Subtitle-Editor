@@ -38,6 +38,27 @@
 
   const $ = (id) => document.getElementById(id);
 
+  // Inline SVG icon from sprite in index.html
+  function icon(name, extraCls = "") {
+    return `<svg class="ic${extraCls ? ` ${extraCls}` : ""}"><use href="#i-${name}"/></svg>`;
+  }
+
+  function setPlayIcon(playing) {
+    const el = $("play-icon");
+    if (el) el.innerHTML = icon(playing ? "pause" : "play");
+  }
+
+  // Swap a button's content to a loading label and return a restore function
+  function setButtonBusy(btn, label) {
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span><span>${escapeHtml(label)}</span>`;
+    return () => {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    };
+  }
+
   // Format ms -> HH:MM:SS.mmm
   function msToDisplay(ms) {
     const v = Math.max(0, Math.round(ms || 0));
@@ -241,12 +262,54 @@
     }, 700);
   }
 
+  // Wrap native <select> in a skin so it renders identically on WebKit / WebView2 / Chromium
+  function skinSelect(sel) {
+    if (!sel || sel.parentElement?.classList.contains("select-skin")) return;
+    const wrap = document.createElement("span");
+    wrap.className = ["select-skin", sel.classList.contains("input-full") ? "input-full" : "", sel.classList.contains("select-compact") ? "select-compact" : ""]
+      .filter(Boolean)
+      .join(" ");
+    if (sel.title) wrap.title = sel.title;
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(sel);
+    const label = document.createElement("span");
+    label.className = "select-skin-label";
+    wrap.appendChild(label);
+    const sync = () => {
+      const opt = sel.options[sel.selectedIndex];
+      label.textContent = opt ? opt.text : "";
+    };
+    sel.addEventListener("change", sync);
+    sel.addEventListener("input", sync);
+    const proto = HTMLSelectElement.prototype;
+    ["value", "selectedIndex"].forEach((prop) => {
+      const desc = Object.getOwnPropertyDescriptor(proto, prop);
+      Object.defineProperty(sel, prop, {
+        configurable: true,
+        get() {
+          return desc.get.call(sel);
+        },
+        set(v) {
+          desc.set.call(sel, v);
+          sync();
+        },
+      });
+    });
+    new MutationObserver(sync).observe(sel, { childList: true, subtree: true });
+    sync();
+  }
+
+  function skinAllSelects() {
+    document.querySelectorAll("select").forEach(skinSelect);
+  }
+
   // Initialization
   async function init() {
     const savedTheme = localStorage.getItem("listento_theme") || "dark";
     document.documentElement.setAttribute("data-theme", savedTheme);
     state.waveformCollapsed = localStorage.getItem("listento_waveform_collapsed") === "1";
 
+    skinAllSelects();
     bindEvents();
     bindWaveformEvents();
 
@@ -290,10 +353,85 @@
           const parsed = JSON.parse(cached);
           if (parsed && Array.isArray(parsed.cues) && parsed.cues.length > 0) {
             loadDocumentIntoStudio(parsed, false);
+            restored = true;
           }
         }
       } catch (_) {}
     }
+
+    if (!restored) {
+      loadWelcomeRecent();
+      updateStatusBar();
+    }
+  }
+
+  async function loadWelcomeRecent() {
+    const wrap = $("welcome-recent-wrap");
+    const list = $("welcome-recent");
+    if (!wrap || !list) return;
+    try {
+      const resp = await fetch("/api/projects");
+      const data = await resp.json();
+      const items = (data.projects || []).slice(0, 3);
+      if (!items.length) {
+        wrap.hidden = true;
+        return;
+      }
+      list.innerHTML = "";
+      items.forEach((p) => {
+        const pct = p.cue_count ? Math.round((p.translated_count * 100) / p.cue_count) : 0;
+        const dt = p.updated_at ? new Date(p.updated_at * 1000).toLocaleString("zh-CN", { hour12: false }) : "";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "recent-item";
+        btn.innerHTML = `
+          ${icon("file")}
+          <div class="recent-main">
+            <span class="recent-name">${escapeHtml(p.filename)}</span>
+            <span class="recent-sub">${escapeHtml((p.source_format || "srt").toUpperCase())} · ${p.cue_count} 条 · 已译 ${pct}% · ${escapeHtml(dt)}</span>
+          </div>
+          <span class="recent-progress"><span style="width:${pct}%"></span></span>
+        `;
+        btn.addEventListener("click", async () => {
+          const r = await fetch(`/api/projects/${encodeURIComponent(p.doc_id)}`);
+          if (r.ok) {
+            loadDocumentIntoStudio(await r.json(), true);
+            toast(`已打开：${p.filename}`, "success");
+          } else {
+            toast("该工程已不存在", "error");
+            loadWelcomeRecent();
+          }
+        });
+        list.appendChild(btn);
+      });
+      wrap.hidden = false;
+    } catch (_) {
+      wrap.hidden = true;
+    }
+  }
+
+  function updateStatusBar() {
+    const stats = $("sb-stats");
+    if (!stats) return;
+    const progWrap = $("sb-progress-wrap");
+    const warnEl = $("sb-warn");
+    if (!state.doc) {
+      stats.textContent = "未打开文档";
+      progWrap.hidden = true;
+      warnEl.hidden = true;
+      return;
+    }
+    const cues = state.doc.cues.filter((c) => !c.is_special);
+    const translated = cues.filter((c) => (c.target_text || "").trim()).length;
+    const longWarn = cues.filter((c) => isCueLongWarning(c)).length;
+    const pct = cues.length ? Math.round((translated * 100) / cues.length) : 0;
+    const lastEnd = state.doc.cues.length ? Math.max(...state.doc.cues.map((c) => c.end_ms)) : 0;
+    stats.textContent = `${cues.length} 条字幕 · 时长 ${msToDisplay(lastEnd).slice(0, 8)}`;
+    progWrap.hidden = false;
+    $("sb-progress-fill").style.width = `${pct}%`;
+    $("sb-progress-text").textContent = `已译 ${translated}/${cues.length}（${pct}%）`;
+    warnEl.hidden = longWarn === 0;
+    warnEl.textContent = `${longWarn} 条语速预警`;
   }
 
   function populateLanguageSelectors(languages) {
@@ -302,15 +440,16 @@
     srcSel.innerHTML = "";
     tgtSel.innerHTML = "";
     for (const lang of languages) {
+      const shortLabel = lang.label.split(" ")[0];
       const opt1 = document.createElement("option");
       opt1.value = lang.code;
-      opt1.textContent = `原: ${lang.label.split(" ")[0]}`;
+      opt1.textContent = lang.code === "auto" ? "自动检测" : shortLabel;
       srcSel.appendChild(opt1);
 
       if (lang.code !== "auto") {
         const opt2 = document.createElement("option");
         opt2.value = lang.code;
-        opt2.textContent = `译: ${lang.label.split(" ")[0]}`;
+        opt2.textContent = shortLabel;
         tgtSel.appendChild(opt2);
       }
     }
@@ -336,7 +475,7 @@
         <div class="dropdown-item-desc">${escapeHtml(s.desc)}</div>
       `;
       btn.addEventListener("click", () => {
-        menu.hidden = true;
+        closeMenus();
         loadSampleById(s.id);
       });
       menu.appendChild(btn);
@@ -388,7 +527,7 @@
 
     badge.className = `model-source-badge${isLiveFetchedModels ? " live" : ""}`;
     badge.textContent = isLiveFetchedModels
-      ? `✅ 已从接口实时拉取 (${filtered.length}/${currentCandidateModels.length})`
+      ? `已从接口拉取 (${filtered.length}/${currentCandidateModels.length})`
       : `内置最新推荐模型 (${filtered.length})`;
 
     chipWrap.innerHTML = "";
@@ -397,7 +536,7 @@
       tip.className = "model-empty-tip";
       tip.textContent = currentCandidateModels.length
         ? "无匹配过滤词的模型，可直接上方输入框填写任意模型 ID。"
-        : "填入地址与 API Key 后点击右上侧「🔄 实时拉取可用模型」，或直接在上方输入框手填模型名。";
+        : "填入地址与 API Key 后点击右上侧「拉取可用模型」，或直接在上方输入框手填模型名。";
       chipWrap.appendChild(tip);
       return;
     }
@@ -532,8 +671,12 @@
     const ready = state.settings.has_api_key || isLocal;
 
     btn.classList.toggle("ready", ready);
-    label.textContent = ready ? `${state.settings.model}` : "配置 API Key";
+    label.textContent = ready ? `${state.settings.model}` : "配置 AI 引擎";
     $("select-trans-mode").value = state.settings.default_mode || "reflective";
+    const sbModel = $("sb-model");
+    if (sbModel) {
+      sbModel.textContent = ready ? `模型 ${state.settings.model}` : "尚未配置 AI 引擎";
+    }
   }
 
   async function loadSampleById(sampleId) {
@@ -586,7 +729,7 @@
 
     if (file.size > 140 * 1024 * 1024) {
       if (statusEl) {
-        statusEl.textContent = "💡 大体积媒体免解码流畅模式 · 拖拽色块平移 · 拖左右边缘修剪起止点";
+        statusEl.textContent = "大体积媒体 · 免解码模式（仍可拖动色块打轴）";
       }
       drawWaveformTimeline();
       return;
@@ -598,7 +741,7 @@
       return;
     }
 
-    if (statusEl) statusEl.textContent = "⏳ 正在解析本地音轨声波峰谷…";
+    if (statusEl) statusEl.textContent = "正在解析音轨波形…";
     try {
       const arrayBuf = await file.arrayBuffer();
       const ctx = new AudioCtx();
@@ -640,12 +783,12 @@
       state.waveformPeaks = peaks;
       state.waveformDurationMs = Math.round(audioBuf.duration * 1000);
       if (statusEl) {
-        statusEl.textContent = "✅ 真实音轨声波已就绪 · 拖拽色块平移 · 拖左右边缘微调起止点";
+        statusEl.textContent = "波形已就绪 · 拖动色块平移 · 拖动边缘修剪";
       }
       drawWaveformTimeline();
     } catch (_) {
       if (statusEl) {
-        statusEl.textContent = "💡 音轨免解码预览 · 可直接拖拽时间轴色块平移或修剪起止点";
+        statusEl.textContent = "无法解码音轨 · 仍可拖动色块打轴";
       }
       drawWaveformTimeline();
     }
@@ -710,6 +853,7 @@
   }
 
   function closeCurrentDocument() {
+    if (!state.doc) return;
     if (state.abortController) state.abortController.abort();
     stopSimPlayback();
     clearTimeout(state.saveTimer);
@@ -754,10 +898,12 @@
     $("count-translated").textContent = "0";
     $("count-long").textContent = "0";
     $("glossary-count").textContent = "0";
-    $("glossary-list").innerHTML = `<div class="empty-mini">添加专有名词或人名后，AI 全文精翻与单句润色将严格统一译法。</div>`;
+    $("glossary-list").innerHTML = `<div class="empty-mini">添加人名或专有名词后，AI 翻译会严格统一译法</div>`;
     $("overlay-primary").textContent = "";
     $("overlay-secondary").textContent = "";
-    toast("已关闭当前字幕文档（历史进度仍可在「🗂 历史工程」随时恢复）", "info");
+    toast("已关闭当前字幕文档（历史进度仍可在「文件 → 历史工程」随时恢复）", "info");
+    updateStatusBar();
+    loadWelcomeRecent();
   }
 
   function clearAllTranslations() {
@@ -791,8 +937,8 @@
     }
     strip.hidden = false;
     strip.innerHTML = `
-      <span>💡 ${escapeHtml(warnings.join(" ｜ "))}</span>
-      <button class="btn btn-icon btn-sm" id="btn-dismiss-warn" type="button">✕</button>
+      <span style="display:inline-flex;align-items:center;gap:8px;">${icon("alert")}${escapeHtml(warnings.join(" ｜ "))}</span>
+      <button class="btn btn-ghost btn-icon btn-sm" id="btn-dismiss-warn" type="button">${icon("x")}</button>
     `;
     $("btn-dismiss-warn").onclick = () => {
       state.doc.warnings = [];
@@ -817,6 +963,7 @@
     $("count-untranslated").textContent = untranslated;
     $("count-translated").textContent = translated;
     $("count-long").textContent = longWarn;
+    updateStatusBar();
   }
 
   function renderGlossary() {
@@ -825,7 +972,7 @@
     $("glossary-count").textContent = glossary.length;
 
     if (!glossary.length) {
-      list.innerHTML = `<div class="empty-mini">添加专有名词或人名后，AI 全文精翻与单句润色将严格统一译法。</div>`;
+      list.innerHTML = `<div class="empty-mini">添加人名或专有名词后，AI 翻译会严格统一译法</div>`;
       return;
     }
 
@@ -840,7 +987,7 @@
           <span class="lang-arrow">→</span>
           <span class="glossary-tgt">${escapeHtml(item.target)}</span>
         </div>
-        <button class="btn btn-icon btn-sm" data-g-del="${idx}" type="button" title="删除">✕</button>
+        <button class="btn btn-ghost btn-icon btn-sm" data-g-del="${idx}" type="button" title="删除">${icon("x")}</button>
       `;
       list.appendChild(row);
     });
@@ -890,18 +1037,32 @@
   function autoResizeTextarea(el) {
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.max(38, el.scrollHeight)}px`;
+    el.style.height = `${Math.max(32, el.scrollHeight + 2)}px`;
   }
 
   function createCueRowElement(cue) {
     const row = document.createElement("div");
-    row.className = `cue-row${cue.id === state.activeCueId ? " active" : ""}${cue.is_special ? " special-row" : ""}`;
-    row.dataset.cueId = cue.id;
-
     const durSec = ((cue.end_ms - cue.start_ms) / 1000).toFixed(1);
     const cps = computeCps(cue);
     const longWarn = isCueLongWarning(cue);
     const hasTgt = Boolean((cue.target_text || "").trim());
+
+    row.className = [
+      "cue-row",
+      cue.id === state.activeCueId ? "active" : "",
+      cue.is_special ? "special-row" : "",
+      !cue.is_special && hasTgt && !longWarn ? "is-done" : "",
+      longWarn ? "is-warn" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    row.dataset.cueId = cue.id;
+    row.addEventListener("contextmenu", (e) => {
+      if (e.target.closest("textarea, input") && window.getSelection()?.toString()) return;
+      e.preventDefault();
+      activateCue(cue.id, false);
+      openCueContextMenu(cue, e.clientX, e.clientY);
+    });
 
     // Column 1: Meta
     const metaCol = document.createElement("div");
@@ -914,7 +1075,7 @@
         ${cue.style && cue.style !== "Default" ? `<span class="badge-mini">${escapeHtml(cue.style)}</span>` : ""}
         ${cue.is_special ? `<span class="badge-mini">特效保留</span>` : ""}
         ${!cue.is_special && hasTgt && !longWarn ? `<span class="badge-mini badge-done">已译</span>` : ""}
-        ${longWarn ? `<span class="badge-mini badge-cps-warn" title="每秒约 ${cps.toFixed(1)} 字，建议点击 ✨ 精简缩字">${cps.toFixed(0)}字/s</span>` : ""}
+        ${longWarn ? `<span class="badge-mini badge-cps-warn" title="每秒约 ${cps.toFixed(1)} 字，建议右键 → 精简压缩字数">${cps.toFixed(0)}字/s</span>` : ""}
       </div>
       <div class="cue-times">
         <input class="time-input" data-time-field="start_ms" value="${msToDisplay(cue.start_ms)}" title="起始时间 (点击微调)" />
@@ -955,7 +1116,7 @@
     textarea.className = "cue-target-input";
     textarea.rows = estimateTextareaRows(cue.target_text);
     textarea.disabled = cue.is_special;
-    textarea.placeholder = cue.is_special ? "（ASS 注释/特效绘图行，导出自动原样保留）" : "输入或精修译文… (Tab 跳至下一行)";
+    textarea.placeholder = cue.is_special ? "ASS 特效 / 注释行，导出时原样保留" : "输入译文…";
     textarea.value = cue.target_text || "";
     textarea.dataset.cueInput = cue.id;
 
@@ -1027,7 +1188,7 @@
       sugBox.className = "ai-suggestions";
       const allOptions = [sug.best, ...(sug.alternatives || [])].filter(Boolean);
       sugBox.innerHTML = `
-        <div class="ai-sug-reason">✨ ${escapeHtml(sug.reason || "AI 候选方案（点击即可采纳）：")}</div>
+        <div class="ai-sug-reason">${icon("sparkles")}<span>${escapeHtml(sug.reason || "AI 候选方案，点击即可采纳")}</span></div>
         <div class="ai-sug-chips"></div>
       `;
       const chipsWrap = sugBox.querySelector(".ai-sug-chips");
@@ -1035,7 +1196,7 @@
         const chip = document.createElement("button");
         chip.type = "button";
         chip.className = "sug-chip";
-        chip.textContent = `${i === 0 ? "★ 推荐：" : "备选："}${optText}`;
+        chip.textContent = `${i === 0 ? "推荐：" : ""}${optText}`;
         chip.addEventListener("click", () => {
           pushUndoSnapshot();
           cue.target_text = optText;
@@ -1055,9 +1216,9 @@
     const actCol = document.createElement("div");
     actCol.className = "cue-actions";
     actCol.innerHTML = `
-      <button class="btn btn-icon btn-sm" data-act="play" type="button" title="定位并预览此句">▶</button>
-      <button class="btn btn-icon btn-sm" data-act="ai" type="button" ${cue.is_special ? "disabled" : ""} title="AI 单句精修 / 重翻 / 缩字">✨</button>
-      <button class="btn btn-icon btn-sm" data-act="more" type="button" title="插入 / 合并 / 删除行">⋯</button>
+      <button class="btn btn-icon btn-sm" data-act="play" type="button" title="定位预览">${icon("play")}</button>
+      <button class="btn btn-icon btn-sm" data-act="ai" type="button" ${cue.is_special ? "disabled" : ""} title="AI 精修">${icon("sparkles")}</button>
+      <button class="btn btn-icon btn-sm" data-act="more" type="button" title="更多操作（也可右键）">${icon("more")}</button>
     `;
 
     actCol.querySelector('[data-act="play"]').addEventListener("click", () => {
@@ -1163,54 +1324,40 @@
     document.querySelectorAll(".row-popover").forEach((el) => el.remove());
   }
 
-  function toggleAiRowPopover(cue, container) {
-    const existing = container.querySelector(".row-popover");
-    closeAllPopovers();
-    if (existing) return;
-
-    const pop = document.createElement("div");
-    pop.className = "row-popover";
-    const actions = [
-      { key: "retranslate", label: "🔄 结合上下文重新精翻" },
-      { key: "natural", label: "💬 润色得更地道口语化" },
-      { key: "shorten", label: "✂️ 精简压缩字数 (降语速)" },
-      { key: "formal", label: "👔 调整为书面专业表达" },
-      { key: "custom", label: "✍️ 输入自定义修改指令…" },
+  function getAiCueActions(cue) {
+    const defs = [
+      { key: "retranslate", icon: "refresh", label: "结合上下文重新翻译", hint: "Alt+↵" },
+      { key: "natural", icon: "chat", label: "润色得更口语自然" },
+      { key: "shorten", icon: "shrink", label: "精简压缩字数" },
+      { key: "formal", icon: "briefcase", label: "改为书面专业表达" },
+      { key: "custom", icon: "pen", label: "自定义修改指令…" },
     ];
-    actions.forEach((a) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "pop-btn";
-      b.textContent = a.label;
-      b.addEventListener("click", async () => {
-        closeAllPopovers();
+    return defs.map((d) => ({
+      icon: d.icon,
+      label: d.label,
+      hint: d.hint || "",
+      disabled: cue.is_special,
+      fn: async () => {
         let customInst = "";
-        if (a.key === "custom") {
+        if (d.key === "custom") {
           const res = await askStudioPrompt(
-            `#${cue.id} 自定义 AI 精修指令`,
+            `#${cue.id} 自定义 AI 修改指令`,
             "",
-            "例如：改成敬语口吻 / 保留英文专有名词不翻译 / 控制在12个字以内…"
+            "例如：改成敬语口吻 / 保留英文专有名词 / 控制在 12 个字以内…"
           );
           if (!res || !res.trim()) return;
           customInst = res.trim();
         }
-        await runSingleCueRewrite(cue, a.key, customInst);
-      });
-      pop.appendChild(b);
-    });
-    container.appendChild(pop);
+        await runSingleCueRewrite(cue, d.key, customInst);
+      },
+    }));
   }
 
-  function toggleRowManagePopover(cue, container) {
-    const existing = container.querySelector(".row-popover");
-    closeAllPopovers();
-    if (existing) return;
-
-    const pop = document.createElement("div");
-    pop.className = "row-popover";
-    const items = [
+  function getManageCueActions(cue) {
+    return [
       {
-        label: "✂️ 智能拆分为两条字幕",
+        icon: "scissors",
+        label: "按比例拆分为两条",
         fn: async () => {
           try {
             const resp = await fetch("/api/subtitles/split-cue", {
@@ -1224,19 +1371,20 @@
             state.doc.cues = data.cues;
             renderAll();
             scheduleAutoSave();
-            toast(`已将 #${cue.id} 按时间比例拆分为两条字幕`, "success");
+            toast(`已将 #${cue.id} 拆分为两条字幕`, "success");
           } catch (err) {
             toast(err.message, "error");
           }
         },
       },
       {
-        label: "➕ 在下方插入新字幕行",
+        icon: "plus",
+        label: "在下方插入新行",
         fn: () => {
           pushUndoSnapshot();
           const idx = state.doc.cues.findIndex((c) => c.id === cue.id);
           const newStart = cue.end_ms + 100;
-          const newCue = {
+          state.doc.cues.splice(idx + 1, 0, {
             id: 0,
             start_ms: newStart,
             end_ms: newStart + 2200,
@@ -1249,15 +1397,15 @@
             is_special: false,
             status: "untranslated",
             note: "",
-          };
-          state.doc.cues.splice(idx + 1, 0, newCue);
+          });
           reindexCues();
           renderAll();
           scheduleAutoSave();
         },
       },
       {
-        label: "🔗 与下一条字幕合并",
+        icon: "merge",
+        label: "与下一条合并",
         fn: () => {
           const idx = state.doc.cues.findIndex((c) => c.id === cue.id);
           const next = state.doc.cues[idx + 1];
@@ -1276,7 +1424,9 @@
         },
       },
       {
-        label: "🗑 删除此条字幕",
+        icon: "trash",
+        label: "删除此条",
+        danger: true,
         fn: () => {
           if (state.doc.cues.length <= 1) {
             toast("至少需保留一条字幕。", "error");
@@ -1290,18 +1440,91 @@
         },
       },
     ];
-    items.forEach((it) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "pop-btn";
-      b.textContent = it.label;
-      b.addEventListener("click", () => {
-        closeAllPopovers();
-        it.fn();
+  }
+
+  // Build menu buttons (shared by row popovers and the right-click context menu)
+  function buildMenuButtons(container, groups, onPick) {
+    groups.forEach((items, gi) => {
+      if (gi > 0) {
+        const sep = document.createElement("div");
+        sep.className = "menu-sep";
+        container.appendChild(sep);
+      }
+      items.forEach((it) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = `pop-btn${it.danger ? " danger" : ""}`;
+        b.disabled = Boolean(it.disabled);
+        b.innerHTML = `${icon(it.icon)}<span style="flex:1">${escapeHtml(it.label)}</span>${
+          it.hint ? `<kbd style="background:transparent;border:none;color:var(--fg-3)">${escapeHtml(it.hint)}</kbd>` : ""
+        }`;
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onPick();
+          it.fn();
+        });
+        container.appendChild(b);
       });
-      pop.appendChild(b);
     });
+  }
+
+  function toggleAiRowPopover(cue, container) {
+    const existing = container.querySelector(".row-popover");
+    closeAllPopovers();
+    if (existing) return;
+    const pop = document.createElement("div");
+    pop.className = "row-popover";
+    buildMenuButtons(pop, [getAiCueActions(cue)], closeAllPopovers);
     container.appendChild(pop);
+  }
+
+  function toggleRowManagePopover(cue, container) {
+    const existing = container.querySelector(".row-popover");
+    closeAllPopovers();
+    if (existing) return;
+    const pop = document.createElement("div");
+    pop.className = "row-popover";
+    buildMenuButtons(pop, [getManageCueActions(cue)], closeAllPopovers);
+    container.appendChild(pop);
+  }
+
+  function closeContextMenu() {
+    const menu = $("ctx-menu");
+    if (menu && !menu.hidden) {
+      menu.hidden = true;
+      menu.innerHTML = "";
+    }
+  }
+
+  function openCueContextMenu(cue, x, y) {
+    closeAllPopovers();
+    closeMenus();
+    const menu = $("ctx-menu");
+    menu.innerHTML = `<div class="menu-label">#${cue.id} · ${escapeHtml(msToDisplay(cue.start_ms).slice(3))}</div>`;
+    const playItem = {
+      icon: "play",
+      label: "定位并预览",
+      fn: () => activateCue(cue.id, true),
+    };
+    buildMenuButtons(menu, [[playItem], getAiCueActions(cue), getManageCueActions(cue)], closeContextMenu);
+    menu.hidden = false;
+    const rect = menu.getBoundingClientRect();
+    const left = Math.min(x, window.innerWidth - rect.width - 8);
+    const top = Math.min(y, window.innerHeight - rect.height - 8);
+    menu.style.left = `${Math.max(8, left)}px`;
+    menu.style.top = `${Math.max(8, top)}px`;
+  }
+
+  function stepActiveCue(delta) {
+    if (!state.doc) return;
+    const list = getFilteredCues().filter((c) => !c.is_special);
+    if (!list.length) return;
+    let idx = list.findIndex((c) => c.id === state.activeCueId);
+    idx = idx === -1 ? 0 : Math.min(list.length - 1, Math.max(0, idx + delta));
+    const target = list[idx];
+    activateCue(target.id, true);
+    const rowEl = document.querySelector(`.cue-row[data-cue-id="${target.id}"]`);
+    if (rowEl) rowEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
   function reindexCues() {
@@ -1406,10 +1629,10 @@
       const video = $("media-player");
       if (video.paused) {
         video.play();
-        $("play-icon").textContent = "⏸";
+        setPlayIcon(true);
       } else {
         video.pause();
-        $("play-icon").textContent = "▶";
+        setPlayIcon(false);
       }
       return;
     }
@@ -1421,7 +1644,7 @@
       if (state.simTimeMs >= maxMs) state.simTimeMs = 0;
       state.simPlaying = true;
       state.simLastTick = performance.now();
-      $("play-icon").textContent = "⏸";
+      setPlayIcon(true);
       const step = (now) => {
         if (!state.simPlaying) return;
         const dt = now - state.simLastTick;
@@ -1443,7 +1666,7 @@
   function stopSimPlayback() {
     state.simPlaying = false;
     if (state.simRaf) cancelAnimationFrame(state.simRaf);
-    $("play-icon").textContent = "▶";
+    setPlayIcon(false);
   }
 
   // AI Batch Stream Translation
@@ -1563,7 +1786,7 @@
       updateCounts();
     } else if (evt.event === "complete") {
       $("progress-fill").style.width = "100%";
-      $("progress-title").textContent = "✅ 全文精翻完成！";
+      $("progress-title").textContent = "全文精翻完成";
       toast(evt.message || "翻译完成", "success");
     } else if (evt.event === "error") {
       throw new Error(evt.message || "翻译发生错误");
@@ -1613,9 +1836,7 @@
   async function runExtractGlossary() {
     if (!state.doc) return;
     const btn = $("btn-extract-glossary");
-    const origText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "⏳ 正在扫描全片提取术语与背景…";
+    const restoreBtn = setButtonBusy(btn, "正在扫描全片…");
     try {
       const resp = await fetch("/api/ai/extract-glossary", {
         method: "POST",
@@ -1654,8 +1875,7 @@
       toast(err.message, "error");
       if ((err.message || "").includes("API Key")) openModal("modal-settings");
     } finally {
-      btn.disabled = false;
-      btn.textContent = origText;
+      restoreBtn();
     }
   }
 
@@ -1739,8 +1959,8 @@
             <div class="project-item-sub">进度：已译 ${p.translated_count}/${p.cue_count} 条 (${pct}%) · 保存于 ${escapeHtml(dt)}</div>
           </div>
           <div class="project-item-actions">
-            <button class="btn btn-primary btn-sm" data-open-proj="${escapeHtml(p.doc_id)}" type="button">打开恢复</button>
-            <button class="btn btn-icon btn-sm" data-del-proj="${escapeHtml(p.doc_id)}" type="button" title="删除存档">🗑</button>
+            <button class="btn btn-subtle btn-sm" data-open-proj="${escapeHtml(p.doc_id)}" type="button">打开</button>
+            <button class="btn btn-ghost btn-icon btn-sm" data-del-proj="${escapeHtml(p.doc_id)}" type="button" title="删除存档">${icon("trash")}</button>
           </div>
         `;
         wrap.appendChild(row);
@@ -1793,22 +2013,22 @@
     const grid = $("qa-report-body");
     const sections = [
       {
-        title: "⏱ 时间轴重叠行",
+        title: "时间轴重叠",
         desc: "前一句结束时间晚于下一句起始时间，会导致播放器字幕闪烁跳动",
         ids: report.overlap_ids || [],
       },
       {
-        title: "🧹 行尾冗余句号 / 多余空格",
+        title: "行尾句号 / 多余空格",
         desc: "符合中文影视规范可一键清理单句末尾多余句号与连续空格",
         ids: report.punctuation_ids || [],
       },
       {
-        title: "⚡ 阅读语速过快 (>16字/s)",
-        desc: "点击行号定位后可用 ✨「精简压缩字数」优化观看体验",
+        title: "语速过快（>16 字/秒）",
+        desc: "定位后右键选择「精简压缩字数」",
         ids: report.high_cps_ids || [],
       },
       {
-        title: "📝 空白未翻译行",
+        title: "未翻译",
         desc: "尚未填写译文的对白条目（可点击工具栏「仅译未完成」补齐）",
         ids: report.untranslated_ids || [],
       },
@@ -1821,7 +2041,7 @@
       card.innerHTML = `
         <div class="qa-card-head">
           <span>${escapeHtml(sec.title)}</span>
-          <span class="qa-count">${sec.ids.length ? `${sec.ids.length} 处` : "✅ 通过"}</span>
+          <span class="qa-count">${sec.ids.length ? `${sec.ids.length} 处` : "通过"}</span>
         </div>
         <div class="rc-desc">${escapeHtml(sec.desc)}</div>
         <div class="qa-chips"></div>
@@ -1851,6 +2071,256 @@
     $(id).hidden = true;
   }
 
+  // ---------- Menubar ----------
+  function closeMenus() {
+    document.querySelectorAll(".menu.open").forEach((m) => {
+      m.classList.remove("open");
+      const pop = m.querySelector(".menu-pop");
+      if (pop) pop.hidden = true;
+    });
+  }
+
+  function syncMenuProxyStates(menuEl) {
+    menuEl.querySelectorAll("[data-click]").forEach((item) => {
+      const target = $(item.dataset.click);
+      let disabled = !target || target.disabled;
+      if (item.dataset.click === "btn-close-doc") disabled = !state.doc;
+      if (item.dataset.click === "btn-open-cmdk") disabled = false;
+      item.disabled = disabled;
+    });
+  }
+
+  function openMenu(menuEl) {
+    closeMenus();
+    closeContextMenu();
+    syncMenuProxyStates(menuEl);
+    menuEl.classList.add("open");
+    const pop = menuEl.querySelector(".menu-pop");
+    if (pop) pop.hidden = false;
+  }
+
+  function bindMenubar() {
+    document.querySelectorAll("[data-menu]").forEach((menuEl) => {
+      const trigger = menuEl.querySelector(".menu-trigger");
+      const pop = menuEl.querySelector(".menu-pop");
+      trigger.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (menuEl.classList.contains("open")) closeMenus();
+        else openMenu(menuEl);
+      });
+      trigger.addEventListener("mouseenter", () => {
+        if (document.querySelector(".menu.open") && !menuEl.classList.contains("open")) openMenu(menuEl);
+      });
+      pop.addEventListener("click", (e) => {
+        const item = e.target.closest(".menu-item, .dropdown-item");
+        if (!item || item.disabled) return;
+        const proxyId = item.dataset.click;
+        if (proxyId) {
+          const target = $(proxyId);
+          if (target && !target.disabled) target.click();
+        }
+        setTimeout(closeMenus, 0);
+      });
+    });
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest("[data-menu]")) closeMenus();
+    });
+  }
+
+  // ---------- Command Palette (Cmd/Ctrl + K) ----------
+  const cmdk = { items: [], filtered: [], active: 0 };
+
+  function buildCommandList() {
+    const hasDoc = Boolean(state.doc);
+    const click = (id) => () => {
+      const el = $(id);
+      if (el) el.click();
+    };
+    const list = [
+      { group: "文件", icon: "file", title: "打开字幕文件", kw: "open srt ass vtt dakai", hint: "⌘O", run: click("subtitle-file-input") },
+      { group: "文件", icon: "film", title: "挂载本地音视频", kw: "video audio media guazai", run: click("media-file-input") },
+      { group: "文件", icon: "mic", title: "音视频转字幕 (ASR)", kw: "asr whisper transcribe shibie", run: () => openModal("modal-asr") },
+      { group: "文件", icon: "layers", title: "多集批量队列", kw: "batch zip queue piliang", run: () => openModal("modal-batch") },
+      { group: "文件", icon: "history", title: "历史工程", kw: "projects history lishi", run: () => openModal("modal-projects") },
+      { group: "文件", icon: "download", title: "导出字幕", kw: "export daochu", hint: "⌘E", enabled: hasDoc, run: () => openModal("modal-export") },
+      { group: "文件", icon: "x", title: "关闭当前文档", kw: "close guanbi", enabled: hasDoc, run: closeCurrentDocument },
+      { group: "翻译", icon: "sparkles", title: "AI 全文精翻", kw: "translate ai fanyi", enabled: hasDoc && !state.translating, run: click("btn-translate-all") },
+      { group: "翻译", icon: "languages", title: "仅翻译未完成条目", kw: "translate untranslated", enabled: hasDoc && !state.translating, run: click("btn-translate-untranslated") },
+      { group: "翻译", icon: "book", title: "AI 提取术语与背景", kw: "glossary term shuyu", enabled: hasDoc, run: click("btn-extract-glossary") },
+      { group: "翻译", icon: "sliders", title: "AI 引擎设置", kw: "settings api key model shezhi", run: () => openModal("modal-settings") },
+      { group: "编辑", icon: "undo", title: "撤销", kw: "undo chexiao", hint: "⌘Z", enabled: state.undoStack.length > 0, run: undo },
+      { group: "编辑", icon: "redo", title: "重做", kw: "redo chongzuo", hint: "⇧⌘Z", enabled: state.redoStack.length > 0, run: redo },
+      { group: "编辑", icon: "search", title: "查找与替换", kw: "find replace chazhao", hint: "⌘F", enabled: hasDoc, run: click("btn-toggle-search") },
+      { group: "编辑", icon: "clock", title: "时间轴整体平移", kw: "shift offset pingyi", enabled: hasDoc, run: click("btn-time-shift") },
+      { group: "编辑", icon: "shield", title: "字幕质量体检", kw: "qa check tijian", enabled: hasDoc, run: () => openModal("modal-qa") },
+      { group: "编辑", icon: "split", title: "双语字幕拆分为双轨", kw: "split bilingual fengui", enabled: hasDoc, run: click("btn-split-bilingual") },
+      { group: "编辑", icon: "eraser", title: "清空全部译文", kw: "clear qingkong", enabled: hasDoc, run: clearAllTranslations },
+      { group: "视图", icon: "contrast", title: "切换深色 / 浅色主题", kw: "theme dark light zhuti", run: click("btn-theme-toggle") },
+      { group: "视图", icon: "panel-right", title: "显示 / 隐藏右侧面板", kw: "sidebar panel", hint: "⌘\\", run: click("btn-toggle-sidebar") },
+      { group: "视图", icon: "wave", title: "显示 / 隐藏波形时间轴", kw: "waveform timeline boxing", enabled: hasDoc, run: click("btn-toggle-waveform") },
+      { group: "视图", icon: "keyboard", title: "键盘快捷键", kw: "shortcuts kuaijiejian", hint: "?", run: () => openModal("modal-shortcuts") },
+    ];
+    if (hasDoc) {
+      [
+        ["all", "显示全部字幕"],
+        ["untranslated", "只看未翻译"],
+        ["translated", "只看已翻译"],
+        ["long", "只看语速预警"],
+      ].forEach(([f, t]) => {
+        list.push({
+          group: "筛选",
+          icon: "search",
+          title: t,
+          kw: `filter ${f}`,
+          run: () => document.querySelector(`#filter-pills .pill[data-filter="${f}"]`)?.click(),
+        });
+      });
+    }
+    (state.meta?.samples || []).forEach((sm) => {
+      list.push({ group: "示例", icon: "star", title: `示例：${sm.title}`, kw: `sample ${sm.badge}`, run: () => loadSampleById(sm.id) });
+    });
+    return list;
+  }
+
+  function scoreCommand(item, q) {
+    if (!q) return 1;
+    const hay = `${item.title} ${item.kw || ""} ${item.group}`.toLowerCase();
+    if (item.title.toLowerCase().startsWith(q)) return 4;
+    if (hay.includes(q)) return 3;
+    // subsequence match
+    let i = 0;
+    for (const ch of hay) {
+      if (ch === q[i]) i++;
+      if (i === q.length) return 1;
+    }
+    return 0;
+  }
+
+  function highlightTitle(title, q) {
+    if (!q) return escapeHtml(title);
+    const idx = title.toLowerCase().indexOf(q);
+    if (idx === -1) return escapeHtml(title);
+    return `${escapeHtml(title.slice(0, idx))}<mark>${escapeHtml(title.slice(idx, idx + q.length))}</mark>${escapeHtml(
+      title.slice(idx + q.length)
+    )}`;
+  }
+
+  function renderCommandPalette() {
+    const q = $("cmdk-input").value.trim().toLowerCase();
+    const listEl = $("cmdk-list");
+    let results = cmdk.items
+      .map((it) => ({ it, s: scoreCommand(it, q) }))
+      .filter((r) => r.s > 0);
+    if (q) results.sort((a, b) => b.s - a.s);
+    cmdk.filtered = results.map((r) => r.it);
+
+    const jump = q.match(/^#?(\d{1,5})$/);
+    if (jump && state.doc) {
+      const id = Number(jump[1]);
+      if (state.doc.cues.some((c) => c.id === id)) {
+        cmdk.filtered.unshift({
+          group: "跳转",
+          icon: "arrow-right",
+          title: `跳转到第 #${id} 条字幕`,
+          run: () => {
+            state.filter = "all";
+            document.querySelectorAll("#filter-pills .pill").forEach((p) => p.classList.toggle("active", p.dataset.filter === "all"));
+            renderCueList(true);
+            activateCue(id, true);
+            document.querySelector(`.cue-row[data-cue-id="${id}"]`)?.scrollIntoView({ block: "center" });
+          },
+        });
+      }
+    }
+
+    cmdk.active = Math.min(cmdk.active, Math.max(0, cmdk.filtered.length - 1));
+    if (!cmdk.filtered.length) {
+      listEl.innerHTML = `<div class="cmdk-empty">没有匹配的命令</div>`;
+      return;
+    }
+
+    listEl.innerHTML = "";
+    let lastGroup = "";
+    cmdk.filtered.forEach((it, i) => {
+      if (!q && it.group !== lastGroup) {
+        const g = document.createElement("div");
+        g.className = "cmdk-group";
+        g.textContent = it.group;
+        listEl.appendChild(g);
+        lastGroup = it.group;
+      }
+      const b = document.createElement("button");
+      b.type = "button";
+      const disabled = it.enabled === false;
+      b.className = `cmdk-item${i === cmdk.active ? " active" : ""}${disabled ? " disabled" : ""}`;
+      b.innerHTML = `${icon(it.icon)}<span class="cmdk-title">${highlightTitle(it.title, q)}</span>${
+        q ? `<span class="cmdk-hint">${escapeHtml(it.group)}</span>` : ""
+      }${it.hint ? `<kbd>${escapeHtml(it.hint)}</kbd>` : ""}`;
+      b.addEventListener("mousemove", () => {
+        if (cmdk.active !== i) {
+          cmdk.active = i;
+          listEl.querySelectorAll(".cmdk-item").forEach((el, j) => el.classList.toggle("active", j === i));
+        }
+      });
+      b.addEventListener("click", () => runCommandAt(i));
+      listEl.appendChild(b);
+    });
+  }
+
+  function runCommandAt(i) {
+    const it = cmdk.filtered[i];
+    if (!it) return;
+    if (it.enabled === false) {
+      toast("当前状态下不可用（请先打开字幕文档）", "info");
+      return;
+    }
+    closeCommandPalette();
+    setTimeout(() => it.run(), 0);
+  }
+
+  function openCommandPalette() {
+    closeMenus();
+    closeContextMenu();
+    cmdk.items = buildCommandList();
+    cmdk.active = 0;
+    $("cmdk-input").value = "";
+    $("cmdk").hidden = false;
+    renderCommandPalette();
+    requestAnimationFrame(() => $("cmdk-input").focus());
+  }
+
+  function closeCommandPalette() {
+    $("cmdk").hidden = true;
+  }
+
+  function bindCommandPalette() {
+    $("btn-open-cmdk").addEventListener("click", openCommandPalette);
+    $("cmdk").addEventListener("mousedown", (e) => {
+      if (e.target.id === "cmdk") closeCommandPalette();
+    });
+    $("cmdk-input").addEventListener("input", () => {
+      cmdk.active = 0;
+      renderCommandPalette();
+    });
+    $("cmdk-input").addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const n = cmdk.filtered.length;
+        if (!n) return;
+        cmdk.active = (cmdk.active + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
+        const items = $("cmdk-list").querySelectorAll(".cmdk-item");
+        items.forEach((el, j) => el.classList.toggle("active", j === cmdk.active));
+        items[cmdk.active]?.scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        runCommandAt(cmdk.active);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        closeCommandPalette();
+      }
+    });
+  }
+
   function collectSettingsForm() {
     const payload = {
       provider_id: gridCurrentProvider,
@@ -1871,13 +2341,14 @@
   function bindEvents() {
     document.addEventListener("click", (e) => {
       if (!e.target.closest(".cue-actions")) closeAllPopovers();
-      if (!e.target.closest("#sample-dropdown")) $("sample-menu").hidden = true;
+      if (!e.target.closest("#ctx-menu")) closeContextMenu();
     });
 
-    $("btn-samples").addEventListener("click", (e) => {
-      e.stopPropagation();
-      $("sample-menu").hidden = !$("sample-menu").hidden;
-    });
+    bindMenubar();
+    bindCommandPalette();
+
+    $("btn-prev-cue").addEventListener("click", () => stepActiveCue(-1));
+    $("btn-next-cue").addEventListener("click", () => stepActiveCue(1));
 
     $("subtitle-file-input").addEventListener("change", (e) => {
       const file = e.target.files?.[0];
@@ -1990,25 +2461,69 @@
 
     window.addEventListener("keydown", (e) => {
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key.toLowerCase() === "z") {
-        if (document.activeElement?.tagName === "TEXTAREA" || document.activeElement?.tagName === "INPUT") {
+      const key = (e.key || "").toLowerCase();
+      const typing = ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement?.tagName);
+
+      if (e.key === "Escape") {
+        if (!$("cmdk").hidden) return; // handled by palette
+        if (!$("ctx-menu").hidden) {
+          closeContextMenu();
           return;
         }
+        if (document.querySelector(".menu.open")) {
+          closeMenus();
+          return;
+        }
+        const openModalEl = Array.from(document.querySelectorAll(".modal-backdrop")).find((m) => !m.hidden);
+        if (openModalEl && openModalEl.id !== "modal-prompt") {
+          closeModal(openModalEl.id);
+          return;
+        }
+        if (!$("search-bar").hidden) {
+          $("btn-close-search").click();
+          return;
+        }
+        if (!$("shift-bar").hidden) {
+          $("shift-bar").hidden = true;
+          return;
+        }
+        closeAllPopovers();
+        return;
+      }
+
+      if (mod && key === "k") {
+        e.preventDefault();
+        if ($("cmdk").hidden) openCommandPalette();
+        else closeCommandPalette();
+      } else if (mod && key === "z") {
+        if (typing) return;
         e.preventDefault();
         if (e.shiftKey) redo();
         else undo();
-      } else if (mod && e.key.toLowerCase() === "f" && state.doc) {
+      } else if (mod && key === "f" && state.doc) {
         e.preventDefault();
         $("search-bar").hidden = false;
         $("search-input").focus();
-      } else if (mod && e.key.toLowerCase() === "s" && state.doc) {
+      } else if (mod && key === "s" && state.doc) {
         e.preventDefault();
         syncDocContextFields();
         scheduleAutoSave();
         toast("当前字幕工程已手动保存", "success");
+      } else if (mod && key === "o") {
+        e.preventDefault();
+        $("subtitle-file-input").click();
+      } else if (mod && key === "e" && state.doc) {
+        e.preventDefault();
+        openModal("modal-export");
+      } else if (mod && e.key === "\\") {
+        e.preventDefault();
+        $("btn-toggle-sidebar").click();
       } else if (e.ctrlKey && e.code === "Space") {
         e.preventDefault();
         togglePlayback();
+      } else if (!typing && !mod && e.key === "?") {
+        e.preventDefault();
+        openModal("modal-shortcuts");
       }
     });
 
@@ -2020,7 +2535,7 @@
       }
     });
     $("media-player").addEventListener("ended", () => {
-      $("play-icon").textContent = "▶";
+      setPlayIcon(false);
     });
     $("player-scrubber").addEventListener("input", (e) => {
       const ratio = Number(e.target.value) / 1000;
@@ -2070,7 +2585,7 @@
     });
 
     $("glossary-list").addEventListener("click", (e) => {
-      const delIdx = e.target.dataset?.gDel;
+      const delIdx = e.target.closest?.("[data-g-del]")?.dataset.gDel;
       if (delIdx !== undefined) {
         pushUndoSnapshot();
         state.doc.glossary.splice(Number(delIdx), 1);
@@ -2263,12 +2778,10 @@
       }
       const btn = $("btn-start-asr");
       const box = $("asr-status-box");
-      btn.disabled = true;
-      const origTxt = btn.textContent;
-      btn.textContent = "⏳ 正在识别语音生成时间轴…";
+      const restoreBtn = setButtonBusy(btn, "正在识别…");
       box.hidden = false;
       box.className = "test-result-box";
-      box.textContent = "正在上传音频流并提取时间轴字幕，请稍候…";
+      box.textContent = "正在上传并识别，长音频可能需要一两分钟…";
 
       const form = new FormData();
       form.append("file", selectedAsrFile);
@@ -2292,10 +2805,9 @@
         toast(`语音识别成功！共生成 ${data.cues.length} 条时间轴字幕`, "success");
       } catch (err) {
         box.className = "test-result-box err";
-        box.textContent = `❌ ${err.message}`;
+        box.textContent = err.message;
       } finally {
-        btn.disabled = false;
-        btn.textContent = origTxt;
+        restoreBtn();
       }
     });
 
@@ -2370,9 +2882,7 @@
 
     $("btn-fetch-models").addEventListener("click", async () => {
       const btn = $("btn-fetch-models");
-      const origText = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = "⏳ 正在拉取…";
+      const restoreBtn = setButtonBusy(btn, "正在拉取…");
       try {
         const resp = await fetch("/api/settings/models", {
           method: "POST",
@@ -2392,8 +2902,7 @@
       } catch (err) {
         toast(err.message, "error");
       } finally {
-        btn.disabled = false;
-        btn.textContent = origText;
+        restoreBtn();
       }
     });
 
@@ -2401,7 +2910,7 @@
       const box = $("cfg-test-result");
       box.hidden = false;
       box.className = "test-result-box";
-      box.textContent = "⏳ 正在测试 API 连通性与响应延迟…";
+      box.textContent = "正在测试连通性…";
       try {
         const resp = await fetch("/api/settings/test", {
           method: "POST",
@@ -2411,10 +2920,10 @@
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.detail || "连接失败");
         box.className = "test-result-box ok";
-        box.textContent = `✅ 连接成功！模型 ${data.model} 响应正常，往返延迟 ${data.latency_ms} ms`;
+        box.textContent = `连接成功 · ${data.model} · 往返 ${data.latency_ms} ms`;
       } catch (err) {
         box.className = "test-result-box err";
-        box.textContent = `❌ ${err.message}`;
+        box.textContent = err.message;
       }
     });
 
@@ -2488,9 +2997,9 @@
         box.hidden = false;
         const canOpenDir = state.meta?.runtime && state.meta.runtime !== "docker";
         box.innerHTML = `
-          <div>✅ 已成功生成 <strong>${data.files.map((x) => escapeHtml(x.filename)).join(", ")}</strong></div>
+          <div>已生成 <strong>${data.files.map((x) => escapeHtml(x.filename)).join(", ")}</strong></div>
           <div style="margin-top:4px;"><small>保存路径：<code>${escapeHtml(data.exports_dir)}</code></small></div>
-          ${canOpenDir ? `<div style="margin-top:8px;"><button class="btn btn-subtle btn-sm" id="btn-reveal-exports" type="button">📂 打开导出文件夹</button></div>` : ""}
+          ${canOpenDir ? `<div style="margin-top:8px;"><button class="btn btn-subtle btn-sm" id="btn-reveal-exports" type="button">${icon("folder")}<span>打开导出文件夹</span></button></div>` : ""}
         `;
         const revealBtn = $("btn-reveal-exports");
         if (revealBtn) {
@@ -2566,15 +3075,36 @@
     }
 
     const ctx = canvas.getContext("2d");
+    const light = document.documentElement.getAttribute("data-theme") === "light";
+    const P = light
+      ? {
+          bg: "#fafafb", ruler: "#f1f1f4", line: "rgba(15,15,25,0.10)", tickMajor: "rgba(15,15,25,0.35)",
+          tickMinor: "rgba(15,15,25,0.14)", tickText: "rgba(15,15,25,0.55)", wave: "rgba(8,145,178,0.35)",
+          base: "rgba(91,80,230,0.18)", cueFill: "rgba(15,15,25,0.06)", cueLine: "rgba(15,15,25,0.18)",
+          activeFill: "rgba(91,80,230,0.16)", activeLine: "#5b50e6", warnFill: "rgba(217,119,6,0.12)",
+          warnLine: "rgba(217,119,6,0.6)", grip: "rgba(15,15,25,0.25)", gripActive: "#5b50e6",
+          idText: "rgba(15,15,25,0.5)", idTextActive: "#4c41d6", text: "rgba(15,15,25,0.75)", textActive: "#18181b",
+          playhead: "#0891b2",
+        }
+      : {
+          bg: "#0d0e11", ruler: "#121317", line: "rgba(255,255,255,0.06)", tickMajor: "rgba(255,255,255,0.32)",
+          tickMinor: "rgba(255,255,255,0.12)", tickText: "rgba(255,255,255,0.5)", wave: "rgba(34,211,238,0.32)",
+          base: "rgba(114,104,242,0.2)", cueFill: "rgba(255,255,255,0.05)", cueLine: "rgba(255,255,255,0.12)",
+          activeFill: "rgba(114,104,242,0.28)", activeLine: "#8b82f8", warnFill: "rgba(251,191,36,0.12)",
+          warnLine: "rgba(251,191,36,0.55)", grip: "rgba(255,255,255,0.22)", gripActive: "#a5a0fb",
+          idText: "rgba(255,255,255,0.45)", idTextActive: "#ffffff", text: "rgba(255,255,255,0.72)", textActive: "#ffffff",
+          playhead: "#22d3ee",
+        };
     ctx.save();
     ctx.scale(dpr, dpr);
 
     // 1. Background + Ruler header
-    ctx.fillStyle = "#080c14";
+    ctx.fillStyle = P.bg;
     ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = "#0e1524";
+    ctx.fillStyle = P.ruler;
     ctx.fillRect(0, 0, width, 18);
-    ctx.strokeStyle = "rgba(148, 163, 184, 0.16)";
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = P.line;
     ctx.beginPath();
     ctx.moveTo(0, 18.5);
     ctx.lineTo(width, 18.5);
@@ -2587,20 +3117,20 @@
     const majorStep = spanMs <= 6000 ? 1000 : spanMs <= 12000 ? 2000 : 5000;
     const minorStep = majorStep / 5;
     const firstTick = Math.floor(winStart / minorStep) * minorStep;
-    ctx.font = '10px "JetBrains Mono", Menlo, monospace';
+    ctx.font = '10px "SF Mono", Menlo, monospace';
     ctx.textBaseline = "top";
 
     for (let t = firstTick; t <= winEnd; t += minorStep) {
       if (t < 0) continue;
       const x = ((t - winStart) / spanMs) * width;
       const isMajor = t % majorStep === 0;
-      ctx.strokeStyle = isMajor ? "rgba(148, 163, 184, 0.42)" : "rgba(148, 163, 184, 0.16)";
+      ctx.strokeStyle = isMajor ? P.tickMajor : P.tickMinor;
       ctx.beginPath();
       ctx.moveTo(x, isMajor ? 2 : 12);
       ctx.lineTo(x, 18);
       ctx.stroke();
       if (isMajor) {
-        ctx.fillStyle = "rgba(203, 213, 225, 0.78)";
+        ctx.fillStyle = P.tickText;
         ctx.fillText(formatShortSec(t), x + 4, 3);
       }
     }
@@ -2612,7 +3142,7 @@
       const totalBuckets = peaks.length;
       const durMs = state.waveformDurationMs;
       const barStep = 3;
-      ctx.fillStyle = "rgba(34, 211, 238, 0.34)";
+      ctx.fillStyle = P.wave;
       for (let px = 0; px < width; px += barStep) {
         const tMs = winStart + (px / width) * spanMs;
         if (tMs < 0 || tMs > durMs) continue;
@@ -2622,7 +3152,7 @@
         ctx.fillRect(px, midY - barH * 0.5, 2, barH);
       }
     } else {
-      ctx.strokeStyle = "rgba(99, 102, 241, 0.16)";
+      ctx.strokeStyle = P.base;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(0, midY);
@@ -2643,23 +3173,15 @@
       const isActive = cue.id === state.activeCueId;
       const isLong = isCueLongWarning(cue);
 
-      ctx.fillStyle = isActive
-        ? "rgba(99, 102, 241, 0.42)"
-        : isLong
-          ? "rgba(245, 158, 11, 0.25)"
-          : "rgba(51, 65, 85, 0.46)";
-      ctx.strokeStyle = isActive
-        ? "#818cf8"
-        : isLong
-          ? "rgba(245, 158, 11, 0.72)"
-          : "rgba(148, 163, 184, 0.45)";
-      ctx.lineWidth = isActive ? 1.6 : 1;
+      ctx.fillStyle = isActive ? P.activeFill : isLong ? P.warnFill : P.cueFill;
+      ctx.strokeStyle = isActive ? P.activeLine : isLong ? P.warnLine : P.cueLine;
+      ctx.lineWidth = isActive ? 1.5 : 1;
 
       const topY = 22;
       const boxH = 46;
       ctx.beginPath();
       if (ctx.roundRect) {
-        ctx.roundRect(x1, topY, bw, boxH, 5);
+        ctx.roundRect(x1 + 0.5, topY + 0.5, bw - 1, boxH - 1, 6);
       } else {
         ctx.rect(x1, topY, bw, boxH);
       }
@@ -2667,21 +3189,21 @@
       ctx.stroke();
 
       // Left & right trim grip accents
-      ctx.fillStyle = isActive ? "rgba(34, 211, 238, 0.85)" : "rgba(148, 163, 184, 0.45)";
-      ctx.fillRect(x1, topY + 6, 2.5, boxH - 12);
-      ctx.fillRect(x1 + bw - 2.5, topY + 6, 2.5, boxH - 12);
+      ctx.fillStyle = isActive ? P.gripActive : P.grip;
+      ctx.fillRect(x1 + 2, topY + 14, 2, boxH - 28);
+      ctx.fillRect(x1 + bw - 4, topY + 14, 2, boxH - 28);
 
       if (bw > 28) {
         ctx.save();
         ctx.beginPath();
         ctx.rect(x1 + 5, topY + 2, bw - 10, boxH - 4);
         ctx.clip();
-        ctx.fillStyle = isActive ? "#ffffff" : "#e2e8f0";
-        ctx.font = '600 10.5px "Inter", "PingFang SC", sans-serif';
+        ctx.fillStyle = isActive ? P.idTextActive : P.idText;
+        ctx.font = '600 10px "SF Mono", Menlo, monospace';
         ctx.fillText(`#${cue.id}`, x1 + 6, topY + 5);
         const label = (cue.target_text || cue.source_text || "").replace(/\s+/g, " ").trim();
-        ctx.fillStyle = isActive ? "#e0e7ff" : "#cbd5e1";
-        ctx.font = '11px "Inter", "PingFang SC", sans-serif';
+        ctx.fillStyle = isActive ? P.textActive : P.text;
+        ctx.font = '11.5px -apple-system, "PingFang SC", "Microsoft YaHei UI", sans-serif';
         ctx.fillText(label, x1 + 6, topY + 22);
         ctx.restore();
       }
@@ -2691,14 +3213,14 @@
     const curMs = getCurrentPlayheadMs();
     if (curMs >= winStart && curMs <= winEnd) {
       const px = ((curMs - winStart) / spanMs) * width;
-      ctx.strokeStyle = "#22d3ee";
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = P.playhead;
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(px, 0);
       ctx.lineTo(px, height);
       ctx.stroke();
 
-      ctx.fillStyle = "#22d3ee";
+      ctx.fillStyle = P.playhead;
       ctx.beginPath();
       ctx.moveTo(px - 5, 0);
       ctx.lineTo(px + 5, 0);
@@ -2883,7 +3405,7 @@
     $("btn-stop-batch").hidden = !state.batchRunning;
 
     if (!total) {
-      listEl.innerHTML = `<div class="empty-mini">点击上方「📂 选择多份字幕」或直接将多集字幕文件拖入窗口，即可开始队列精翻或批量转格式导出。</div>`;
+      listEl.innerHTML = `<div class="empty-mini">添加多份字幕或直接拖入窗口，即可开始队列精翻或批量转格式。</div>`;
       return;
     }
 
@@ -2892,16 +3414,16 @@
       const dialogueCount = item.doc.cues.filter((c) => !c.is_special).length;
       const translatedCount = item.doc.cues.filter((c) => !c.is_special && (c.target_text || "").trim()).length;
       let badgeCls = "";
-      let badgeTxt = `待翻译 (${translatedCount}/${dialogueCount})`;
+      let badgeTxt = `待翻译 ${translatedCount}/${dialogueCount}`;
       if (item.status === "translating") {
         badgeCls = "running";
-        badgeTxt = `⏳ 精翻中 ${item.progressPct}%`;
+        badgeTxt = `精翻中 ${item.progressPct}%`;
       } else if (item.status === "done") {
         badgeCls = "done";
-        badgeTxt = `✅ 已完成 (${translatedCount}/${dialogueCount})`;
+        badgeTxt = `已完成 ${translatedCount}/${dialogueCount}`;
       } else if (item.status === "error") {
         badgeCls = "err";
-        badgeTxt = `❌ ${item.errorMsg || "失败"}`;
+        badgeTxt = `${item.errorMsg || "失败"}`;
       }
 
       const row = document.createElement("div");
@@ -2918,8 +3440,8 @@
           </div>
         </div>
         <div class="batch-item-actions">
-          <button class="btn btn-subtle btn-sm" data-batch-open="${idx}" type="button" ${state.batchRunning ? "disabled" : ""}>精修预览</button>
-          <button class="btn btn-icon btn-sm" data-batch-del="${idx}" type="button" title="从队列移除" ${state.batchRunning ? "disabled" : ""}>✕</button>
+          <button class="btn btn-ghost btn-sm" data-batch-open="${idx}" type="button" ${state.batchRunning ? "disabled" : ""}>打开</button>
+          <button class="btn btn-ghost btn-icon btn-sm" data-batch-del="${idx}" type="button" title="从队列移除" ${state.batchRunning ? "disabled" : ""}>${icon("x")}</button>
         </div>
       `;
       listEl.appendChild(row);
@@ -3049,7 +3571,7 @@
           renderAll(true);
         }
       }
-      toast(`🎉 批量队列精翻完成（共完成 ${finishedFiles} 份字幕），可一键打包导出 ZIP！`, "success");
+      toast(`批量队列精翻完成（共完成 ${finishedFiles} 份字幕），可一键打包导出 ZIP！`, "success");
     } catch (err) {
       if (err.name === "AbortError") {
         state.batchQueue.forEach((it) => {
@@ -3115,11 +3637,11 @@
       box.hidden = false;
       const canOpenDir = state.meta?.runtime && state.meta.runtime !== "docker";
       box.innerHTML = `
-        <div>✅ 已打包生成 <strong>${escapeHtml(data.zip_filename)}</strong>（共包含 ${data.file_count} 个字幕文件）</div>
+        <div>已打包生成 <strong>${escapeHtml(data.zip_filename)}</strong>（共包含 ${data.file_count} 个字幕文件）</div>
         <div style="margin-top:4px;"><small>保存路径：<code>${escapeHtml(data.saved_path)}</code></small></div>
         <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-          <a class="btn btn-subtle btn-sm" href="${escapeHtml(data.download_url)}" download="${escapeHtml(data.zip_filename)}" style="text-decoration:none;">⬇️ 下载 ZIP 压缩包</a>
-          ${canOpenDir ? `<button class="btn btn-subtle btn-sm" id="btn-batch-reveal-dir" type="button">📂 打开导出文件夹</button>` : ""}
+          <a class="btn btn-subtle btn-sm" href="${escapeHtml(data.download_url)}" download="${escapeHtml(data.zip_filename)}" style="text-decoration:none;">${icon("download")}<span>下载 ZIP</span></a>
+          ${canOpenDir ? `<button class="btn btn-subtle btn-sm" id="btn-batch-reveal-dir" type="button">${icon("folder")}<span>打开导出文件夹</span></button>` : ""}
         </div>
       `;
       const revBtn = $("btn-batch-reveal-dir");
