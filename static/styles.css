@@ -901,8 +901,16 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 24px;
+}
+
+.welcome-btn-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .welcome-or {
@@ -1481,6 +1489,177 @@ body {
   font-size: 11.5px;
   color: var(--text-muted);
   padding: 4px 2px;
+}
+
+/* v2.3 Studio Additions: ASR, Projects, QA Doctor, Code Preview, Shortcuts */
+.asr-file-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px dashed var(--border-strong);
+  flex-wrap: wrap;
+}
+
+.preview-code-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.code-preview-box {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  max-height: 165px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.project-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+}
+
+.project-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.project-item-title {
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.project-item-sub {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.project-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.qa-report-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.qa-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qa-card.clean {
+  border-color: rgba(16, 185, 129, 0.32);
+}
+
+.qa-card.warn {
+  border-color: rgba(245, 158, 11, 0.38);
+}
+
+.qa-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.qa-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: var(--bg-surface);
+}
+
+.qa-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 76px;
+  overflow-y: auto;
+}
+
+.qa-id-chip {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--cyan);
+  cursor: pointer;
+}
+
+.qa-id-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  font-size: 12.5px;
+}
+
+kbd {
+  display: inline-block;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
 }
 
 .saved-badge {

@@ -249,6 +249,148 @@ class StudioTestSuite(unittest.TestCase):
         self.assertEqual(load_r.status_code, 200)
         self.assertEqual(load_r.json()["cues"][0]["target_text"], "大家好，欢迎来到听见 Studio")
 
+        del_r = self.client.delete("/api/projects/proj_ut_01")
+        self.assertEqual(del_r.status_code, 200)
+        list_after = self.client.get("/api/projects").json()["projects"]
+        self.assertFalse(any(p["doc_id"] == "proj_ut_01" for p in list_after))
+
+    def test_qa_doctor_split_cue_and_ass_style_presets(self):
+        cues = [
+            {
+                "id": 1,
+                "start_ms": 1000,
+                "end_ms": 4200,
+                "source_text": "First clause here, and second clause right after.",
+                "target_text": "第一分句在这里，  紧接着第二分句。",
+                "speaker": "",
+                "style": "Default",
+                "ass_tags": "",
+                "raw_event_meta": {},
+                "is_special": False,
+                "status": "translated",
+                "note": "",
+            },
+            {
+                "id": 2,
+                "start_ms": 3800,
+                "end_ms": 6000,
+                "source_text": "Overlapping next cue.",
+                "target_text": "",
+                "speaker": "",
+                "style": "Default",
+                "ass_tags": "",
+                "raw_event_meta": {},
+                "is_special": False,
+                "status": "untranslated",
+                "note": "",
+            },
+        ]
+        # 1. QA check detects overlap, punctuation, and untranslated
+        qa_r = self.client.post("/api/subtitles/qa-check", json=cues)
+        self.assertEqual(qa_r.status_code, 200)
+        rep = qa_r.json()
+        self.assertEqual(rep["overlap_ids"], [1])
+        self.assertEqual(rep["punctuation_ids"], [1])
+        self.assertEqual(rep["untranslated_ids"], [2])
+
+        # 2. QA auto-fix resolves overlap & cleans trailing period / double spaces
+        fix_r = self.client.post(
+            "/api/subtitles/qa-fix",
+            json={"cues": cues, "fix_overlaps": True, "clean_punctuation": True, "target_language": "zh"},
+        )
+        self.assertEqual(fix_r.status_code, 200)
+        fixed_data = fix_r.json()
+        self.assertEqual(fixed_data["summary"]["fixed_overlaps"], 1)
+        self.assertEqual(fixed_data["summary"]["cleaned_punctuation"], 1)
+        self.assertLess(fixed_data["cues"][0]["end_ms"], fixed_data["cues"][1]["start_ms"])
+        self.assertEqual(fixed_data["cues"][0]["target_text"], "第一分句在这里， 紧接着第二分句")
+
+        # 3. Smart split single cue into two cues
+        sp_r = self.client.post("/api/subtitles/split-cue", json={"cues": fixed_data["cues"], "cue_id": 1})
+        self.assertEqual(sp_r.status_code, 200)
+        self.assertEqual(len(sp_r.json()["cues"]), 3)
+
+        # 4. Preview export with Netflix ASS box preset
+        doc = self.client.get("/api/samples/tech_keynote").json()
+        doc["cues"][0]["target_text"] = "欢迎体验听见 Studio 2.3"
+        prev_r = self.client.post(
+            "/api/subtitles/preview-export",
+            json={
+                "document": doc,
+                "formats": ["ass"],
+                "track_mode": "bilingual_tgt_top",
+                "ass_secondary_scale": 72,
+                "ass_style_preset": "netflix_box",
+                "fallback_to_source": True,
+            },
+        )
+        self.assertEqual(prev_r.status_code, 200)
+        self.assertIn("netflix_box", prev_r.json()["preview"])
+
+    def test_asr_transcription_whisper_segments_and_sensevoice_tags(self):
+        orig_async_client = httpx.AsyncClient
+
+        def asr_mock_handler(request: httpx.Request) -> httpx.Response:
+            body_str = request.content.decode("latin-1")
+            if "SenseVoiceSmall" in body_str:
+                return httpx.Response(
+                    200,
+                    json={"text": "<|zh|><|NEUTRAL|><|Speech|>大家好，欢迎使用听见语音识别！今天我们来演示自动断句功能。"},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "language": "en",
+                    "segments": [
+                        {"start": 0.2, "end": 2.6, "text": "Hello from Whisper Turbo!"},
+                        {"start": 2.8, "end": 5.4, "text": "Subtitles are generated with exact timestamps."},
+                    ],
+                },
+            )
+
+        def mocked_asr_client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(asr_mock_handler)
+            return orig_async_client(*args, **kwargs)
+
+        with patch("core.asr.httpx.AsyncClient", side_effect=mocked_asr_client):
+            # Test SenseVoice plain text + emotion tag stripping + proportional segmentation
+            r1 = self.client.post(
+                "/api/asr/transcribe",
+                files={"file": ("demo.mp3", b"FAKE_MP3_DATA", "audio/mpeg")},
+                data={
+                    "language": "auto",
+                    "duration_sec": "8.0",
+                    "asr_provider_id": "siliconflow",
+                    "asr_base_url": "https://api.siliconflow.cn/v1",
+                    "asr_api_key": "sk-mock-sf",
+                    "asr_model": "FunAudioLLM/SenseVoiceSmall",
+                },
+            )
+            self.assertEqual(r1.status_code, 200)
+            d1 = r1.json()
+            self.assertEqual(d1["source_language"], "zh")
+            self.assertGreaterEqual(len(d1["cues"]), 2)
+            self.assertNotIn("<|zh|>", d1["cues"][0]["source_text"])
+
+            # Test Groq/OpenAI Whisper verbose_json segments
+            r2 = self.client.post(
+                "/api/asr/transcribe",
+                files={"file": ("talk.mp4", b"FAKE_MP4_DATA", "video/mp4")},
+                data={
+                    "language": "en",
+                    "duration_sec": "6.0",
+                    "asr_provider_id": "groq",
+                    "asr_base_url": "https://api.groq.com/openai/v1",
+                    "asr_api_key": "gsk-mock",
+                    "asr_model": "whisper-large-v3-turbo",
+                },
+            )
+            self.assertEqual(r2.status_code, 200)
+            d2 = r2.json()
+            self.assertEqual(len(d2["cues"]), 2)
+            self.assertEqual(d2["cues"][0]["start_ms"], 200)
+            self.assertEqual(d2["cues"][0]["source_text"], "Hello from Whisper Turbo!")
+
     def test_json_extractor_strips_reasoning_and_fences(self):
         messy = "<think>analyzing context...</think>\nHere is JSON:\n```json\n{\"ok\": true, \"items\": [1, 2,]}\n```"
         parsed = extract_json_payload(messy)

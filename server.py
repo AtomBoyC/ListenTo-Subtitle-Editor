@@ -25,23 +25,30 @@ from core.config_store import (
     save_settings,
     to_public_settings,
 )
+from core.asr import get_asr_presets, transcribe_media_to_document
 from core.models import (
     APISettingsUpdate,
     ExportRequest,
     GlossaryExtractRequest,
+    QAFixRequest,
     SingleCueRewriteRequest,
+    SplitCueRequest,
     SubtitleCue,
     SubtitleDocument,
     TimeShiftRequest,
     TranslateBatchRequest,
 )
 from core.parser import (
+    ASS_STYLE_PRESETS,
     SubtitleParseError,
+    auto_fix_subtitles,
     decode_subtitle_bytes,
+    diagnose_subtitles,
     export_document_format,
     parse_subtitle_content,
     shift_cues_timestamps,
     split_bilingual_cues,
+    split_single_cue,
 )
 from core.translator import (
     GENRE_GUIDES,
@@ -98,7 +105,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
-    return {"status": "ok", "version": "2.0.0"}
+    return {"status": "ok", "version": "2.3.0"}
 
 
 @app.get("/api/meta")
@@ -107,8 +114,13 @@ async def get_meta() -> Dict[str, Any]:
     runtime = "docker" if _IN_DOCKER else ("desktop" if IS_DESKTOP else "local")
     return {
         "runtime": runtime,
+        "version": "2.3.0",
         "exports_dir": str(EXPORTS_DIR),
         "presets": [p.model_dump() for p in PROVIDER_PRESETS],
+        "asr_presets": [p.model_dump() for p in get_asr_presets(_IN_DOCKER)],
+        "ass_style_presets": [
+            {"id": k, "name": v["name"]} for k, v in ASS_STYLE_PRESETS.items()
+        ],
         "languages": [{"code": k, "label": v} for k, v in LANGUAGE_LABELS.items()],
         "genres": [{"id": k, "desc": v} for k, v in GENRE_GUIDES.items()],
         "samples": BUILTIN_SAMPLES,
@@ -206,12 +218,82 @@ async def load_sample(sample_id: str) -> Dict[str, Any]:
     return doc.model_dump()
 
 
+@app.post("/api/asr/transcribe")
+async def api_asr_transcribe(
+    file: UploadFile = File(...),
+    language: str = Form("auto"),
+    duration_sec: float = Form(0.0),
+    asr_provider_id: str = Form(""),
+    asr_base_url: str = Form(""),
+    asr_api_key: str = Form(""),
+    asr_model: str = Form(""),
+    persist_asr: str = Form("true"),
+) -> Dict[str, Any]:
+    raw_bytes = await file.read()
+    if len(raw_bytes) > 200 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="音视频文件超过 200MB 限制，建议先提取音频 (.mp3/.m4a) 后上传识别。")
+
+    if persist_asr == "true" and (asr_provider_id or asr_base_url or asr_model or asr_api_key):
+        save_settings(
+            APISettingsUpdate(
+                asr_provider_id=asr_provider_id or None,
+                asr_base_url=asr_base_url or None,
+                asr_api_key=asr_api_key or None,
+                asr_model=asr_model or None,
+            )
+        )
+
+    settings = load_settings()
+    try:
+        doc = await transcribe_media_to_document(
+            media_bytes=raw_bytes,
+            filename=file.filename or "media.mp3",
+            settings=settings,
+            language=language,
+            duration_sec=duration_sec,
+            asr_base_url=asr_base_url or None,
+            asr_api_key=asr_api_key or None,
+            asr_model=asr_model or None,
+            asr_provider_id=asr_provider_id or None,
+        )
+        return doc.model_dump()
+    except LLMTranslationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/subtitles/split-bilingual")
 async def api_split_bilingual(cues: List[SubtitleCue]) -> Dict[str, Any]:
     updated, count = split_bilingual_cues(cues)
     return {
         "split_count": count,
         "cues": [c.model_dump() for c in updated],
+    }
+
+
+@app.post("/api/subtitles/split-cue")
+async def api_split_cue(payload: SplitCueRequest) -> Dict[str, Any]:
+    updated = split_single_cue(payload.cues, payload.cue_id)
+    return {"cues": [c.model_dump() for c in updated]}
+
+
+@app.post("/api/subtitles/qa-check")
+async def api_qa_check(cues: List[SubtitleCue]) -> Dict[str, Any]:
+    return diagnose_subtitles(cues)
+
+
+@app.post("/api/subtitles/qa-fix")
+async def api_qa_fix(payload: QAFixRequest) -> Dict[str, Any]:
+    fixed, summary = auto_fix_subtitles(
+        payload.cues,
+        fix_overlaps=payload.fix_overlaps,
+        clean_punctuation=payload.clean_punctuation,
+        target_language=payload.target_language,
+    )
+    report = diagnose_subtitles(fixed)
+    return {
+        "cues": [c.model_dump() for c in fixed],
+        "summary": summary,
+        "report": report,
     }
 
 
@@ -294,6 +376,7 @@ async def api_export_subtitles(payload: ExportRequest) -> Dict[str, Any]:
                 track_mode=payload.track_mode,
                 ass_secondary_scale=payload.ass_secondary_scale,
                 fallback_to_source=payload.fallback_to_source,
+                ass_style_preset=payload.ass_style_preset,
             )
             out_name = f"{stem}.{lang_tag}.{fmt}"
             disk_path = EXPORTS_DIR / out_name
@@ -310,6 +393,27 @@ async def api_export_subtitles(payload: ExportRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"files": exported_files, "exports_dir": str(EXPORTS_DIR)}
+
+
+@app.post("/api/subtitles/preview-export")
+async def api_preview_export(payload: ExportRequest) -> Dict[str, Any]:
+    fmt = payload.formats[0] if payload.formats else "srt"
+    try:
+        rendered = export_document_format(
+            payload.document,
+            target_format=fmt,
+            track_mode=payload.track_mode,
+            ass_secondary_scale=payload.ass_secondary_scale,
+            fallback_to_source=payload.fallback_to_source,
+            ass_style_preset=payload.ass_style_preset,
+        )
+        lines = rendered.splitlines()
+        preview = "\n".join(lines[:40])
+        if len(lines) > 40:
+            preview += f"\n\n... （共 {len(lines)} 行，此处仅展示前 40 行预览）"
+        return {"format": fmt, "preview": preview}
+    except SubtitleParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/projects/save")
@@ -356,6 +460,15 @@ async def load_project(doc_id: str) -> Dict[str, Any]:
     if not target.is_file():
         raise HTTPException(status_code=404, detail="未找到保存的项目。")
     return json.loads(target.read_text(encoding="utf-8"))
+
+
+@app.delete("/api/projects/{doc_id}")
+async def delete_project(doc_id: str) -> Dict[str, Any]:
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", doc_id)[:24]
+    target = PROJECTS_DIR / f"{safe_id}.json"
+    if target.is_file():
+        target.unlink(missing_ok=True)
+    return {"ok": True, "doc_id": safe_id}
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

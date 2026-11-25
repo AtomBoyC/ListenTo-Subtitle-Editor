@@ -1,9 +1,9 @@
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="ListenTo Studio" \
-      org.opencontainers.image.description="Modern AI Bilingual Subtitle Editor & Context-Reflective Translator" \
+      org.opencontainers.image.description="Modern AI Bilingual Subtitle Editor, ASR Transcriber & Context-Reflective Translator" \
       org.opencontainers.image.source="https://github.com/AtomBoyC/ListenTo-Subtitle-Editor" \
-      org.opencontainers.image.version="2.0.0"
+      org.opencontainers.image.version="2.3.0"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

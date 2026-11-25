@@ -1,6 +1,6 @@
-# 听见 Studio 2.0 · AI 双语字幕精修工作台
+# 听见 Studio 2.3 · AI 双语字幕精修与语音识别工作台
 
-> 由原 Windows `Tkinter + Argos` 批处理字幕工具全面重构升级而来，融合了 **VideoLingo / VideoCaptioner** 的多步上下文反思精翻管线与 **SubPlayer / LLM-Subtrans** 的可视化双语编辑体验。
+> 由原 Windows `Tkinter + Argos` 批处理字幕工具全面重构升级而来，融合了 **VideoLingo / VideoCaptioner** 的多步上下文反思精翻管线、**SenseVoice / Whisper** 音视频语音识别，以及 **SubPlayer / Subtitle Edit** 的双语可视化精修与时间轴体检体验。
 >
 > 📦 **旧版归档说明**：原 v1.0 版本（Windows `Tkinter` 桌面版 + Argos 离线模型）已完整备份保存在 [`legacy-v1`](https://github.com/AtomBoyC/ListenTo-Subtitle-Editor/tree/legacy-v1) 分支。
 
@@ -82,13 +82,14 @@ chmod +x start.sh && ./start.sh
 
 ```text
 ListenTo-Subtitle-Editor/
-├── server.py                      # FastAPI 核心服务与流式 SSE 翻译接口
+├── server.py                      # FastAPI 核心服务、流式 SSE 翻译、ASR 识别与字幕体检接口
 ├── desktop.py                     # Windows / macOS 原生桌面窗口启动入口 (pywebview)
 ├── core/
-│   ├── models.py                  # 字幕文档、术语表与翻译请求数据模型
-│   ├── parser.py                  # SRT / ASS / SSA / VTT 多编码解析与无损双语导出
-│   ├── translator.py              # 滑动窗口上下文 + 直译/反思/意译大模型管线
-│   └── config_store.py            # 跨平台配置持久化（适配桌面端/Docker/本地开发）
+│   ├── models.py                  # 字幕文档、术语表、ASR 配置与样式预设数据模型
+│   ├── parser.py                  # 多编码解析、单条智能拆分、字幕体检修复与 4 款影院 ASS 导出
+│   ├── translator.py              # 13 家平台预设 + /models 实时发现 + 滑动窗口反思精翻管线
+│   ├── asr.py                     # 双引擎音视频转字幕（SenseVoice / Groq Whisper / 本地 Faster-Whisper）
+│   └── config_store.py            # 跨平台配置与历史工程持久化（适配桌面端/Docker/本地开发）
 ├── static/                        # 现代双语字幕剪辑台前端 (HTML / CSS / JS)
 ├── samples/                       # 内置中英/中日/双语分轨体验示例字幕
 ├── packaging/                     # 桌面图标生成与 PyInstaller 跨平台自动打包脚本

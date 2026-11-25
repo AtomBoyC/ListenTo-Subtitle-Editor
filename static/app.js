@@ -222,6 +222,7 @@
       populateLanguageSelectors(meta.languages);
       populateSampleMenus(meta.samples);
       populateProviderPresets(meta.presets);
+      populateAsrPresets(meta.asr_presets || []);
       refreshApiStatusUI();
       if (meta.runtime === "desktop" && meta.exports_dir) {
         $("export-footer-hint").innerHTML = `导出文件将直接保存至：<code>${escapeHtml(meta.exports_dir)}</code>`;
@@ -385,6 +386,86 @@
     renderModelPickerChips();
   }
 
+  let currentAsrProvider = "siliconflow";
+  let selectedAsrFile = null;
+  let selectedAsrDurationSec = 0;
+
+  function populateAsrPresets(presets) {
+    const grid = $("asr-provider-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+    presets.forEach((p) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "provider-btn";
+      btn.dataset.asrProviderId = p.id;
+      btn.innerHTML = `
+        <div class="provider-btn-name">${escapeHtml(p.name)}</div>
+        <div class="provider-btn-badge">${escapeHtml(p.badge)}</div>
+      `;
+      btn.addEventListener("click", () => selectAsrPreset(p.id, true));
+      grid.appendChild(btn);
+    });
+  }
+
+  function selectAsrPreset(providerId, overwriteFields = false) {
+    const presets = state.meta?.asr_presets || [];
+    const preset = presets.find((p) => p.id === providerId) || presets[0];
+    if (!preset) return;
+    currentAsrProvider = preset.id;
+
+    document.querySelectorAll("[data-asr-provider-id]").forEach((b) => {
+      b.classList.toggle("active", b.dataset.asrProviderId === preset.id);
+    });
+    if ($("asr-provider-hint")) $("asr-provider-hint").textContent = preset.doc_hint || "";
+
+    if (overwriteFields) {
+      $("asr-base-url").value = preset.base_url;
+      $("asr-model").value = preset.default_model;
+    }
+
+    const chipWrap = $("asr-model-chips");
+    if (chipWrap) {
+      chipWrap.innerHTML = "";
+      (preset.models || []).forEach((m) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = `model-chip${$("asr-model").value.trim() === m ? " active" : ""}`;
+        chip.textContent = m;
+        chip.onclick = () => {
+          $("asr-model").value = m;
+          selectAsrPreset(currentAsrProvider, false);
+        };
+        chipWrap.appendChild(chip);
+      });
+    }
+  }
+
+  function prepareAsrMediaFile(file) {
+    selectedAsrFile = file;
+    selectedAsrDurationSec = 0;
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+    $("asr-file-label").textContent = `已选：${file.name} (${sizeMb} MB · 正在读取时长…)`;
+
+    const probe = document.createElement("video");
+    probe.preload = "metadata";
+    const objUrl = URL.createObjectURL(file);
+    probe.onloadedmetadata = () => {
+      if (Number.isFinite(probe.duration) && probe.duration > 0) {
+        selectedAsrDurationSec = probe.duration;
+        $("asr-file-label").textContent = `已选：${file.name} (${sizeMb} MB · 时长 ${Math.round(probe.duration)} 秒)`;
+      } else {
+        $("asr-file-label").textContent = `已选：${file.name} (${sizeMb} MB)`;
+      }
+      URL.revokeObjectURL(objUrl);
+    };
+    probe.onerror = () => {
+      $("asr-file-label").textContent = `已选：${file.name} (${sizeMb} MB)`;
+      URL.revokeObjectURL(objUrl);
+    };
+    probe.src = objUrl;
+  }
+
   function refreshApiStatusUI() {
     if (!state.settings) return;
     const btn = $("btn-open-settings");
@@ -469,6 +550,7 @@
     $("btn-open-export").disabled = !hasDoc;
     $("btn-translate-all").disabled = !hasDoc;
     $("btn-translate-untranslated").disabled = !hasDoc;
+    $("btn-open-qa").disabled = !hasDoc;
     $("btn-split-bilingual").disabled = !hasDoc;
     $("btn-time-shift").disabled = !hasDoc;
     $("btn-toggle-search").disabled = !hasDoc;
@@ -675,6 +757,19 @@
           if (allInputs[nextIdx]) {
             allInputs[nextIdx].focus();
           }
+        } else if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+          e.preventDefault();
+          const allInputs = Array.from(document.querySelectorAll(".cue-target-input:not(:disabled)"));
+          const idx = allInputs.indexOf(textarea);
+          const nextIdx = e.key === "ArrowUp" ? idx - 1 : idx + 1;
+          if (allInputs[nextIdx]) {
+            allInputs[nextIdx].focus();
+            const targetCueId = Number(allInputs[nextIdx].dataset.cueInput);
+            if (targetCueId) activateCue(targetCueId, true);
+          }
+        } else if (e.altKey && e.key === "Enter") {
+          e.preventDefault();
+          runSingleCueRewrite(cue, "retranslate", "");
         }
       });
 
@@ -812,6 +907,27 @@
     const pop = document.createElement("div");
     pop.className = "row-popover";
     const items = [
+      {
+        label: "✂️ 智能拆分为两条字幕",
+        fn: async () => {
+          try {
+            const resp = await fetch("/api/subtitles/split-cue", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ cues: state.doc.cues, cue_id: cue.id }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || "拆分失败");
+            pushUndoSnapshot();
+            state.doc.cues = data.cues;
+            renderAll();
+            scheduleAutoSave();
+            toast(`已将 #${cue.id} 按时间比例拆分为两条字幕`, "success");
+          } catch (err) {
+            toast(err.message, "error");
+          }
+        },
+      },
       {
         label: "➕ 在下方插入新字幕行",
         fn: () => {
@@ -1263,8 +1379,160 @@
     }
     if (id === "modal-export") {
       $("export-result-box").hidden = true;
+      $("export-code-preview").hidden = true;
+    }
+    if (id === "modal-asr" && state.settings) {
+      $("asr-base-url").value = state.settings.asr_base_url || "https://api.siliconflow.cn/v1";
+      $("asr-model").value = state.settings.asr_model || "FunAudioLLM/SenseVoiceSmall";
+      $("asr-api-key").value = "";
+      $("asr-key-saved-badge").hidden = !state.settings.has_asr_api_key;
+      $("asr-key-saved-badge").textContent = state.settings.has_asr_api_key
+        ? `已保存 (${state.settings.masked_asr_api_key})`
+        : "";
+      $("asr-status-box").hidden = true;
+      selectAsrPreset(state.settings.asr_provider_id || "siliconflow", false);
+    }
+    if (id === "modal-projects") {
+      loadAndRenderProjects();
+    }
+    if (id === "modal-qa") {
+      runAndRenderQaCheck();
     }
     $(id).hidden = false;
+  }
+
+  async function loadAndRenderProjects() {
+    const wrap = $("project-list");
+    wrap.innerHTML = `<div class="empty-mini">正在读取已保存工程…</div>`;
+    try {
+      const resp = await fetch("/api/projects");
+      const data = await resp.json();
+      const items = data.projects || [];
+      if (!items.length) {
+        wrap.innerHTML = `<div class="empty-mini">暂无历史工程记录。载入字幕后系统会自动存档你的所有精修进度。</div>`;
+        return;
+      }
+      wrap.innerHTML = "";
+      items.forEach((p) => {
+        const pct = p.cue_count ? Math.round((p.translated_count * 100) / p.cue_count) : 0;
+        const dt = p.updated_at ? new Date(p.updated_at * 1000).toLocaleString("zh-CN", { hour12: false }) : "";
+        const row = document.createElement("div");
+        row.className = "project-item";
+        row.innerHTML = `
+          <div class="project-item-main">
+            <div class="project-item-title">
+              <span>${escapeHtml(p.filename)}</span>
+              <span class="doc-tag">${escapeHtml((p.source_format || "srt").toUpperCase())}</span>
+            </div>
+            <div class="project-item-sub">进度：已译 ${p.translated_count}/${p.cue_count} 条 (${pct}%) · 保存于 ${escapeHtml(dt)}</div>
+          </div>
+          <div class="project-item-actions">
+            <button class="btn btn-primary btn-sm" data-open-proj="${escapeHtml(p.doc_id)}" type="button">打开恢复</button>
+            <button class="btn btn-icon btn-sm" data-del-proj="${escapeHtml(p.doc_id)}" type="button" title="删除存档">🗑</button>
+          </div>
+        `;
+        wrap.appendChild(row);
+      });
+
+      wrap.querySelectorAll("[data-open-proj]").forEach((btn) => {
+        btn.onclick = async () => {
+          const id = btn.dataset.openProj;
+          const r = await fetch(`/api/projects/${encodeURIComponent(id)}`);
+          if (r.ok) {
+            const doc = await r.json();
+            loadDocumentIntoStudio(doc, true);
+            closeModal("modal-projects");
+            toast(`已恢复工程：${doc.filename}`, "success");
+          }
+        };
+      });
+
+      wrap.querySelectorAll("[data-del-proj]").forEach((btn) => {
+        btn.onclick = async () => {
+          const id = btn.dataset.delProj;
+          await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+          loadAndRenderProjects();
+          toast("已删除该历史存档", "info");
+        };
+      });
+    } catch (_) {
+      wrap.innerHTML = `<div class="empty-mini">读取工程列表失败。</div>`;
+    }
+  }
+
+  async function runAndRenderQaCheck() {
+    if (!state.doc) return;
+    const grid = $("qa-report-body");
+    grid.innerHTML = `<div class="empty-mini">正在扫描时间轴与字幕质量…</div>`;
+    try {
+      const resp = await fetch("/api/subtitles/qa-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(state.doc.cues),
+      });
+      const report = await resp.json();
+      renderQaReportCards(report);
+    } catch (_) {
+      grid.innerHTML = `<div class="empty-mini">质量体检执行失败。</div>`;
+    }
+  }
+
+  function renderQaReportCards(report) {
+    const grid = $("qa-report-body");
+    const sections = [
+      {
+        title: "⏱ 时间轴重叠行",
+        desc: "前一句结束时间晚于下一句起始时间，会导致播放器字幕闪烁跳动",
+        ids: report.overlap_ids || [],
+      },
+      {
+        title: "🧹 行尾冗余句号 / 多余空格",
+        desc: "符合中文影视规范可一键清理单句末尾多余句号与连续空格",
+        ids: report.punctuation_ids || [],
+      },
+      {
+        title: "⚡ 阅读语速过快 (>16字/s)",
+        desc: "点击行号定位后可用 ✨「精简压缩字数」优化观看体验",
+        ids: report.high_cps_ids || [],
+      },
+      {
+        title: "📝 空白未翻译行",
+        desc: "尚未填写译文的对白条目（可点击工具栏「仅译未完成」补齐）",
+        ids: report.untranslated_ids || [],
+      },
+    ];
+
+    grid.innerHTML = "";
+    sections.forEach((sec) => {
+      const card = document.createElement("div");
+      card.className = `qa-card ${sec.ids.length ? "warn" : "clean"}`;
+      card.innerHTML = `
+        <div class="qa-card-head">
+          <span>${escapeHtml(sec.title)}</span>
+          <span class="qa-count">${sec.ids.length ? `${sec.ids.length} 处` : "✅ 通过"}</span>
+        </div>
+        <div class="rc-desc">${escapeHtml(sec.desc)}</div>
+        <div class="qa-chips"></div>
+      `;
+      const chips = card.querySelector(".qa-chips");
+      sec.ids.slice(0, 60).forEach((cid) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "qa-id-chip";
+        chip.textContent = `#${cid}`;
+        chip.onclick = () => {
+          state.filter = "all";
+          document.querySelectorAll("#filter-pills .pill").forEach((p) => p.classList.toggle("active", p.dataset.filter === "all"));
+          renderCueList();
+          closeModal("modal-qa");
+          activateCue(cid, true);
+          const rowEl = document.querySelector(`.cue-row[data-cue-id="${cid}"]`);
+          if (rowEl) rowEl.scrollIntoView({ block: "center", behavior: "smooth" });
+        };
+        chips.appendChild(chip);
+      });
+      grid.appendChild(card);
+    });
   }
 
   function closeModal(id) {
@@ -1332,8 +1600,12 @@
         const ext = f.name.split(".").pop().toLowerCase();
         if (["srt", "ass", "ssa", "vtt"].includes(ext)) {
           uploadSubtitleFile(f);
-        } else if (f.type.startsWith("video/") || f.type.startsWith("audio/") || ["mp4", "mkv", "mov", "webm", "mp3", "wav", "m4a"].includes(ext)) {
+        } else if (f.type.startsWith("video/") || f.type.startsWith("audio/") || ["mp4", "mkv", "mov", "webm", "mp3", "wav", "m4a", "flac"].includes(ext)) {
           mountMediaFile(f);
+          if (!state.doc) {
+            prepareAsrMediaFile(f);
+            openModal("modal-asr");
+          }
         } else {
           toast(`不支持的文件类型：${f.name}`, "error");
         }
@@ -1369,6 +1641,11 @@
         e.preventDefault();
         $("search-bar").hidden = false;
         $("search-input").focus();
+      } else if (mod && e.key.toLowerCase() === "s" && state.doc) {
+        e.preventDefault();
+        syncDocContextFields();
+        scheduleAutoSave();
+        toast("当前字幕工程已手动保存", "success");
       } else if (e.ctrlKey && e.code === "Space") {
         e.preventDefault();
         togglePlayback();
@@ -1557,9 +1834,123 @@
       if (state.abortController) state.abortController.abort();
     });
 
-    // Settings Modal
+    // Settings, ASR, Projects, QA, Shortcuts, Export Modals
     $("btn-open-settings").addEventListener("click", () => openModal("modal-settings"));
     $("btn-open-export").addEventListener("click", () => openModal("modal-export"));
+    $("btn-open-asr").addEventListener("click", () => openModal("modal-asr"));
+    $("btn-welcome-asr").addEventListener("click", () => openModal("modal-asr"));
+    $("btn-open-projects").addEventListener("click", () => openModal("modal-projects"));
+    $("btn-open-qa").addEventListener("click", () => openModal("modal-qa"));
+    $("btn-open-shortcuts").addEventListener("click", () => openModal("modal-shortcuts"));
+
+    $("asr-file-input").addEventListener("change", (e) => {
+      const f = e.target.files?.[0];
+      if (f) prepareAsrMediaFile(f);
+      e.target.value = "";
+    });
+
+    $("btn-start-asr").addEventListener("click", async () => {
+      if (!selectedAsrFile) {
+        toast("请先选择需要识别的视频或音频文件。", "error");
+        return;
+      }
+      const btn = $("btn-start-asr");
+      const box = $("asr-status-box");
+      btn.disabled = true;
+      const origTxt = btn.textContent;
+      btn.textContent = "⏳ 正在识别语音生成时间轴…";
+      box.hidden = false;
+      box.className = "test-result-box";
+      box.textContent = "正在上传音频流并提取时间轴字幕，请稍候…";
+
+      const form = new FormData();
+      form.append("file", selectedAsrFile);
+      form.append("language", $("asr-language").value);
+      form.append("duration_sec", String(selectedAsrDurationSec || 0));
+      form.append("asr_provider_id", currentAsrProvider);
+      form.append("asr_base_url", $("asr-base-url").value.trim());
+      form.append("asr_api_key", $("asr-api-key").value.trim());
+      form.append("asr_model", $("asr-model").value.trim());
+
+      try {
+        const resp = await fetch("/api/asr/transcribe", { method: "POST", body: form });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "语音识别失败");
+
+        mountMediaFile(selectedAsrFile);
+        loadDocumentIntoStudio(data, true);
+        const sResp = await fetch("/api/settings");
+        if (sResp.ok) state.settings = await sResp.json();
+        closeModal("modal-asr");
+        toast(`语音识别成功！共生成 ${data.cues.length} 条时间轴字幕`, "success");
+      } catch (err) {
+        box.className = "test-result-box err";
+        box.textContent = `❌ ${err.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origTxt;
+      }
+    });
+
+    $("btn-run-qa-fix").addEventListener("click", async () => {
+      if (!state.doc) return;
+      try {
+        const resp = await fetch("/api/subtitles/qa-fix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cues: state.doc.cues,
+            fix_overlaps: true,
+            clean_punctuation: true,
+            target_language: state.doc.target_language || "zh",
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "修复失败");
+        pushUndoSnapshot();
+        state.doc.cues = data.cues;
+        renderAll();
+        scheduleAutoSave();
+        renderQaReportCards(data.report);
+        toast(
+          `已完成自动修复：修正时间重叠 ${data.summary.fixed_overlaps} 处，规范标点 ${data.summary.cleaned_punctuation} 处`,
+          "success"
+        );
+      } catch (err) {
+        toast(err.message, "error");
+      }
+    });
+
+    $("btn-preview-export").addEventListener("click", async () => {
+      if (!state.doc) return;
+      syncDocContextFields();
+      const formats = Array.from(document.querySelectorAll(".format-checks input:checked")).map((el) => el.value);
+      const fmt = formats[0] || "srt";
+      const trackMode = document.querySelector('input[name="track_mode"]:checked')?.value || "bilingual_tgt_top";
+      const scale = parseInt($("export-ass-scale").value, 10) || 72;
+      const assPreset = $("export-ass-preset").value || "cinema_outline";
+      try {
+        const resp = await fetch("/api/subtitles/preview-export", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            document: state.doc,
+            formats: [fmt],
+            track_mode: trackMode,
+            ass_secondary_scale: scale,
+            ass_style_preset: assPreset,
+            fallback_to_source: true,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "预览失败");
+        const pre = $("export-code-preview");
+        pre.hidden = false;
+        pre.textContent = data.preview;
+      } catch (err) {
+        toast(err.message, "error");
+      }
+    });
 
     document.querySelectorAll("[data-close-modal]").forEach((btn) => {
       btn.addEventListener("click", () => closeModal(btn.dataset.closeModal));
@@ -1659,6 +2050,7 @@
       }
       const trackMode = document.querySelector('input[name="track_mode"]:checked')?.value || "bilingual_tgt_top";
       const scale = parseInt($("export-ass-scale").value, 10) || 72;
+      const assPreset = $("export-ass-preset")?.value || "cinema_outline";
 
       try {
         const resp = await fetch("/api/subtitles/export", {
@@ -1669,6 +2061,7 @@
             formats,
             track_mode: trackMode,
             ass_secondary_scale: scale,
+            ass_style_preset: assPreset,
             fallback_to_source: true,
           }),
         });

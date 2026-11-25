@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>听见 Studio 2.0 · AI 双语字幕精修工作台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2.2.0" />
+  <title>听见 Studio 2.3 · AI 双语字幕精修与语音识别工作台</title>
+  <link rel="stylesheet" href="/static/styles.css?v=2.3.0" />
 </head>
 <body>
   <div id="app" class="studio-shell">
@@ -20,7 +20,7 @@
           </div>
           <div class="brand-text">
             <span class="brand-title">听见 Studio</span>
-            <span class="brand-badge">v2.0</span>
+            <span class="brand-badge">v2.3</span>
           </div>
         </div>
 
@@ -32,6 +32,14 @@
           <span>打开字幕</span>
         </label>
         <input id="subtitle-file-input" type="file" accept=".srt,.ass,.ssa,.vtt" hidden />
+
+        <button class="btn btn-subtle" id="btn-open-asr" type="button" title="从视频或音频自动识别人声生成时间轴字幕">
+          <span>🎙️ 音视频转字幕</span>
+        </button>
+
+        <button class="btn btn-subtle" id="btn-open-projects" type="button" title="查看与恢复自动保存的历史字幕工程">
+          <span>🗂 历史工程</span>
+        </button>
 
         <div class="dropdown" id="sample-dropdown">
           <button class="btn btn-subtle" id="btn-samples" type="button">
@@ -64,6 +72,10 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
           </button>
         </div>
+
+        <button class="btn btn-icon" id="btn-open-shortcuts" title="键盘快捷键速查 (?)">
+          <span>⌨</span>
+        </button>
 
         <button class="btn btn-icon" id="btn-toggle-sidebar" title="收起/展开左侧预览与术语栏">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
@@ -122,6 +134,9 @@
       </div>
 
       <div class="toolbar-group toolbar-right">
+        <button class="btn btn-subtle btn-sm" id="btn-open-qa" type="button" disabled title="字幕质量体检与时间轴重叠/标点一键修复">
+          <span>🩺 字幕体检</span>
+        </button>
         <button class="btn btn-subtle btn-sm" id="btn-split-bilingual" type="button" disabled title="将已有双语字幕按上下行拆分为原文与译文双轨">
           <span>🔀 双语分轨</span>
         </button>
@@ -272,16 +287,21 @@
                 <rect x="3" y="18" width="18" height="3" rx="1.5"/>
               </svg>
             </div>
-            <h1>欢迎使用 听见 Studio 2.0</h1>
+            <h1>欢迎使用 听见 Studio 2.3</h1>
             <p class="welcome-sub">
-              告别传统逐词硬翻与简陋批处理界面。结合 <strong>滑动窗口上下文 + 直译/反思/意译管线</strong>，支持双语逐行精修、视频同步预览与 ASS 特效无损导出。
+              集 <strong>音视频 AI 转写 + 滑动窗口反思精翻 + 双语时间轴精修 + 影院级 ASS 无损导出</strong> 于一体的全流程字幕工作台。
             </p>
 
             <div class="welcome-actions">
-              <label class="btn btn-primary btn-lg" for="subtitle-file-input">
-                📂 选择本地字幕文件 (.srt / .ass / .ssa / .vtt)
-              </label>
-              <span class="welcome-or">或者直接将字幕 / 视频文件拖入窗口任意位置</span>
+              <div class="welcome-btn-row">
+                <label class="btn btn-primary btn-lg" for="subtitle-file-input">
+                  📂 打开字幕文件 (.srt / .ass / .vtt)
+                </label>
+                <button class="btn btn-subtle btn-lg" id="btn-welcome-asr" type="button">
+                  🎙️ 音视频提取生成字幕
+                </button>
+              </div>
+              <span class="welcome-or">或者直接将字幕 / 视频 / 音频文件拖入窗口任意位置</span>
             </div>
 
             <div class="sample-cards-wrap">
@@ -439,9 +459,28 @@
             </div>
           </div>
 
+          <div class="form-row-2">
+            <div class="field-group">
+              <label class="field-label" for="export-ass-preset">ASS 影院视觉样式预设（SRT/VTT 转 ASS 时生效）</label>
+              <select id="export-ass-preset" class="input-full">
+                <option value="cinema_outline">经典高清描边（白字深黑边 · 通用推荐）</option>
+                <option value="netflix_box">Netflix 沉浸暗盒（半透黑底 · 复杂画面极清晰）</option>
+                <option value="classic_yellow">美剧经典暖黄（鹅黄主字 + 纯白副字 · 电影感）</option>
+                <option value="tech_cyan">现代极客浅金（清晰高对比 · 技术教程/发布会）</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="export-ass-scale">ASS 双语副字幕字号比例：<span id="ass-scale-val">72%</span></label>
+              <input id="export-ass-scale" type="range" min="50" max="100" value="72" class="scrubber" style="margin-top:8px;" />
+            </div>
+          </div>
+
           <div class="field-group">
-            <label class="field-label" for="export-ass-scale">ASS 双语副字幕字号缩放比例：<span id="ass-scale-val">72%</span></label>
-            <input id="export-ass-scale" type="range" min="50" max="100" value="72" class="scrubber" />
+            <div class="preview-code-top">
+              <label class="field-label" style="margin:0;">导出文件内容实时预览</label>
+              <button class="btn btn-subtle btn-sm" id="btn-preview-export" type="button">👁 刷新源码预览</button>
+            </div>
+            <pre class="code-preview-box" id="export-code-preview" hidden></pre>
           </div>
 
           <div class="export-result-box" id="export-result-box" hidden></div>
@@ -452,6 +491,154 @@
           <div class="footer-right">
             <button class="btn btn-subtle" data-close-modal="modal-export" type="button">关闭</button>
             <button class="btn btn-primary" id="btn-confirm-export" type="button">立即生成并导出</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: ASR Audio/Video Transcription -->
+    <div class="modal-backdrop" id="modal-asr" hidden>
+      <div class="modal-card modal-card-wide">
+        <div class="modal-header">
+          <div>
+            <h2>🎙️ 音视频 AI 语音识别转字幕 (ASR)</h2>
+            <p class="modal-sub">导入 MP4 / MOV / MKV / MP3 / WAV / M4A，自动提取人声生成时间轴字幕并联动挂载预览</p>
+          </div>
+          <button class="btn btn-icon" data-close-modal="modal-asr" type="button">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="field-group">
+            <label class="field-label">选择语音识别服务预设</label>
+            <div class="provider-grid" id="asr-provider-grid"></div>
+            <p class="provider-hint" id="asr-provider-hint"></p>
+          </div>
+
+          <div class="form-row-2">
+            <div class="field-group">
+              <label class="field-label" for="asr-base-url">识别接口 Base URL</label>
+              <input id="asr-base-url" class="input-full" type="text" placeholder="https://api.siliconflow.cn/v1" />
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="asr-api-key">识别 API Key <span id="asr-key-saved-badge" class="saved-badge" hidden>已保存</span></label>
+              <input id="asr-api-key" class="input-full" type="password" autocomplete="off" placeholder="留空将自动尝试复用已保存的同平台密钥" />
+            </div>
+          </div>
+
+          <div class="form-row-2">
+            <div class="field-group">
+              <label class="field-label" for="asr-model">语音识别模型 (Model)</label>
+              <input id="asr-model" class="input-full" type="text" placeholder="FunAudioLLM/SenseVoiceSmall" />
+              <div class="model-chip-list" id="asr-model-chips" style="margin-top:5px;"></div>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="asr-language">音视频原语言</label>
+              <select id="asr-language" class="input-full">
+                <option value="auto">自动检测语言 (推荐)</option>
+                <option value="zh">中文 (普通话/粤语)</option>
+                <option value="en">英语 (English)</option>
+                <option value="ja">日语 (Japanese)</option>
+                <option value="ko">韩语 (Korean)</option>
+                <option value="fr">法语 (French)</option>
+                <option value="de">德语 (German)</option>
+                <option value="es">西班牙语 (Spanish)</option>
+                <option value="ru">俄语 (Russian)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">选择待识别的视频或音频文件</label>
+            <div class="asr-file-box">
+              <label class="btn btn-subtle" for="asr-file-input">📂 选择音视频文件</label>
+              <input id="asr-file-input" type="file" accept="video/*,audio/*,.mp4,.mkv,.mov,.webm,.mp3,.wav,.m4a,.flac" hidden />
+              <span id="asr-file-label" class="utility-hint">尚未选择文件（支持 MP4 / MOV / MP3 / WAV / M4A 等）</span>
+            </div>
+          </div>
+
+          <div class="test-result-box" id="asr-status-box" hidden></div>
+        </div>
+
+        <div class="modal-footer">
+          <span class="utility-hint">识别完成后将自动载入双语编辑台，并把该音视频同步挂载到左侧监看台</span>
+          <div class="footer-right">
+            <button class="btn btn-subtle" data-close-modal="modal-asr" type="button">取消</button>
+            <button class="btn btn-primary" id="btn-start-asr" type="button">🚀 开始识别生成字幕</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Saved Projects History -->
+    <div class="modal-backdrop" id="modal-projects" hidden>
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <h2>🗂 历史字幕工程管理</h2>
+            <p class="modal-sub">所有编辑进度、术语表与语境摘要均已自动存档，点击即可随时无缝恢复</p>
+          </div>
+          <button class="btn btn-icon" data-close-modal="modal-projects" type="button">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="project-list" id="project-list"></div>
+        </div>
+        <div class="modal-footer">
+          <span class="utility-hint">快捷键 <code>Cmd/Ctrl + S</code> 可随时立即保存当前工程快照</span>
+          <div class="footer-right">
+            <button class="btn btn-subtle" data-close-modal="modal-projects" type="button">关闭</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Subtitle Quality Check & Auto-Fix Doctor -->
+    <div class="modal-backdrop" id="modal-qa" hidden>
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <h2>🩺 字幕质量体检与自动修复</h2>
+            <p class="modal-sub">检测时间轴重叠、阅读语速超标、漏译行与行尾冗余标点，支持一键修复与定位</p>
+          </div>
+          <button class="btn btn-icon" data-close-modal="modal-qa" type="button">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="qa-report-body" class="qa-report-grid"></div>
+        </div>
+        <div class="modal-footer">
+          <span class="utility-hint">点击上方任意题号标签可直接跳转定位至对应字幕行</span>
+          <div class="footer-right">
+            <button class="btn btn-subtle" data-close-modal="modal-qa" type="button">关闭</button>
+            <button class="btn btn-primary" id="btn-run-qa-fix" type="button">🔧 一键修复重叠与标点规范</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Keyboard Shortcuts Cheat Sheet -->
+    <div class="modal-backdrop" id="modal-shortcuts" hidden>
+      <div class="modal-card" style="max-width: 520px;">
+        <div class="modal-header">
+          <div>
+            <h2>⌨️ 键盘快捷键速查</h2>
+            <p class="modal-sub">全程键盘流操作，大幅提升双语字幕精修效率</p>
+          </div>
+          <button class="btn btn-icon" data-close-modal="modal-shortcuts" type="button">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="shortcut-list">
+            <div class="shortcut-row"><span>跳至下一条 / 上一条译文框</span><span><kbd>Tab</kbd> / <kbd>Shift + Tab</kbd></span></div>
+            <div class="shortcut-row"><span>上下切换字幕行并同步定位视频画面</span><span><kbd>Alt + ↑</kbd> / <kbd>Alt + ↓</kbd></span></div>
+            <div class="shortcut-row"><span>对当前焦点行触发 AI 重新精翻润色</span><span><kbd>Alt + Enter</kbd></span></div>
+            <div class="shortcut-row"><span>播放 / 暂停左侧视频或时间轴预览</span><span><kbd>Ctrl + Space</kbd></span></div>
+            <div class="shortcut-row"><span>撤销 / 重做上一步修改</span><span><kbd>Cmd/Ctrl + Z</kbd> / <kbd>Shift + Z</kbd></span></div>
+            <div class="shortcut-row"><span>打开全文查找与批量替换栏</span><span><kbd>Cmd/Ctrl + F</kbd></span></div>
+            <div class="shortcut-row"><span>立即手动保存当前工程进度</span><span><kbd>Cmd/Ctrl + S</kbd></span></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <span></span>
+          <div class="footer-right">
+            <button class="btn btn-primary" data-close-modal="modal-shortcuts" type="button">知道了</button>
           </div>
         </div>
       </div>
@@ -483,6 +670,6 @@
     <div class="toast-stack" id="toast-stack"></div>
   </div>
 
-  <script src="/static/app.js?v=2.2.0" defer></script>
+  <script src="/static/app.js?v=2.3.0" defer></script>
 </body>
 </html>

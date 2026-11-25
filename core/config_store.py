@@ -287,7 +287,22 @@ def mask_key(key: str) -> str:
 
 
 def _env_fallback_key() -> str:
-    for var in ("SUBTITLE_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+    for var in (
+        "SUBTITLE_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "SILICONFLOW_API_KEY",
+    ):
+        val = os.environ.get(var, "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _env_fallback_asr_key() -> str:
+    for var in ("SILICONFLOW_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY", "SUBTITLE_API_KEY"):
         val = os.environ.get(var, "").strip()
         if val:
             return val
@@ -302,6 +317,8 @@ def load_settings() -> APISettings:
             settings = APISettings(**raw)
             if not settings.api_key:
                 settings.api_key = _env_fallback_key()
+            if not settings.asr_api_key:
+                settings.asr_api_key = _env_fallback_asr_key()
             return settings
         except Exception:
             pass
@@ -309,6 +326,9 @@ def load_settings() -> APISettings:
     env_key = _env_fallback_key()
     if env_key:
         default.api_key = env_key
+    asr_env = _env_fallback_asr_key()
+    if asr_env:
+        default.asr_api_key = asr_env
     return default
 
 
@@ -318,6 +338,8 @@ def save_settings(update: APISettingsUpdate) -> APISettings:
     patch = update.model_dump(exclude_unset=True)
     clear_key = patch.pop("clear_api_key", False)
     new_key = patch.pop("api_key", None)
+    clear_asr_key = patch.pop("clear_asr_api_key", False)
+    new_asr_key = patch.pop("asr_api_key", None)
 
     for k, v in patch.items():
         if v is not None:
@@ -327,6 +349,11 @@ def save_settings(update: APISettingsUpdate) -> APISettings:
         data["api_key"] = ""
     elif new_key is not None and new_key.strip():
         data["api_key"] = new_key.strip()
+
+    if clear_asr_key:
+        data["asr_api_key"] = ""
+    elif new_asr_key is not None and new_asr_key.strip():
+        data["asr_api_key"] = new_asr_key.strip()
 
     updated = APISettings(**data)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -348,12 +375,16 @@ def resolve_effective_settings(override: Optional[APISettingsUpdate] = None) -> 
     data = base.model_dump()
     patch = override.model_dump(exclude_unset=True)
     patch.pop("clear_api_key", None)
+    patch.pop("clear_asr_api_key", None)
     api_key = patch.pop("api_key", None)
+    asr_api_key = patch.pop("asr_api_key", None)
     for k, v in patch.items():
         if v is not None:
             data[k] = v
     if api_key is not None and api_key.strip():
         data["api_key"] = api_key.strip()
+    if asr_api_key is not None and asr_api_key.strip():
+        data["asr_api_key"] = asr_api_key.strip()
     return APISettings(**data)
 
 
@@ -371,4 +402,9 @@ def to_public_settings(settings: APISettings) -> APISettingsPublic:
         timeout=settings.timeout,
         default_mode=settings.default_mode,
         default_target_lang=settings.default_target_lang,
+        asr_provider_id=settings.asr_provider_id,
+        asr_base_url=settings.asr_base_url,
+        has_asr_api_key=bool(settings.asr_api_key.strip()),
+        masked_asr_api_key=mask_key(settings.asr_api_key),
+        asr_model=settings.asr_model,
     )

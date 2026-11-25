@@ -1,4 +1,4 @@
-"""Pydantic data models for ListenTo Studio v2.0."""
+"""Pydantic data models for ListenTo Studio v2.3."""
 
 from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
@@ -13,6 +13,7 @@ ExportTrackMode = Literal[
     "source_only",
 ]
 TranslationMode = Literal["reflective", "fast"]
+AssStylePresetId = Literal["cinema_outline", "netflix_box", "classic_yellow", "tech_cyan"]
 
 
 class GlossaryItem(BaseModel):
@@ -77,6 +78,10 @@ class APISettings(BaseModel):
     timeout: float = Field(default=90.0, ge=10.0, le=300.0)
     default_mode: TranslationMode = "reflective"
     default_target_lang: str = "zh"
+    asr_provider_id: str = "siliconflow"
+    asr_base_url: str = "https://api.siliconflow.cn/v1"
+    asr_api_key: str = ""
+    asr_model: str = "FunAudioLLM/SenseVoiceSmall"
 
 
 class APISettingsPublic(BaseModel):
@@ -92,6 +97,11 @@ class APISettingsPublic(BaseModel):
     timeout: float
     default_mode: TranslationMode
     default_target_lang: str
+    asr_provider_id: str
+    asr_base_url: str
+    has_asr_api_key: bool
+    masked_asr_api_key: str
+    asr_model: str
 
 
 class APISettingsUpdate(BaseModel):
@@ -107,6 +117,11 @@ class APISettingsUpdate(BaseModel):
     timeout: Optional[float] = None
     default_mode: Optional[TranslationMode] = None
     default_target_lang: Optional[str] = None
+    asr_provider_id: Optional[str] = None
+    asr_base_url: Optional[str] = None
+    asr_api_key: Optional[str] = None
+    clear_asr_api_key: bool = False
+    asr_model: Optional[str] = None
 
 
 class TranslateBatchRequest(BaseModel):
@@ -146,6 +161,7 @@ class ExportRequest(BaseModel):
     formats: List[SubtitleFormat] = Field(default_factory=lambda: ["srt"])
     track_mode: ExportTrackMode = "bilingual_tgt_top"
     ass_secondary_scale: int = Field(default=72, ge=40, le=100)
+    ass_style_preset: AssStylePresetId = "cinema_outline"
     fallback_to_source: bool = True
 
 
@@ -153,3 +169,15 @@ class TimeShiftRequest(BaseModel):
     cues: List[SubtitleCue]
     offset_ms: int
     cue_ids: Optional[List[int]] = None
+
+
+class SplitCueRequest(BaseModel):
+    cues: List[SubtitleCue]
+    cue_id: int
+
+
+class QAFixRequest(BaseModel):
+    cues: List[SubtitleCue]
+    fix_overlaps: bool = True
+    clean_punctuation: bool = True
+    target_language: str = "zh"
