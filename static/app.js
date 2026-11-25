@@ -12,6 +12,7 @@
     searchQuery: "",
     searchScope: "target",
     previewSubview: "bilingual",
+    renderLimit: 250,
     undoStack: [],
     redoStack: [],
     translating: false,
@@ -23,6 +24,15 @@
     simLastTick: 0,
     simRaf: null,
     hasMediaFile: false,
+    waveformZoom: 1,
+    waveformCollapsed: false,
+    waveformPeaks: null,
+    waveformDurationMs: 0,
+    wfViewStartMs: 0,
+    wfDrag: null,
+    batchQueue: [],
+    batchRunning: false,
+    batchAbort: null,
     saveTimer: null,
   };
 
@@ -87,13 +97,17 @@
     }, 3600);
   }
 
-  function pushUndoSnapshot() {
-    if (!state.doc) return;
-    const snap = JSON.stringify({
+  function captureDocSnapshotString() {
+    if (!state.doc) return null;
+    return JSON.stringify({
       cues: state.doc.cues,
       glossary: state.doc.glossary,
       scene_summary: state.doc.scene_summary,
     });
+  }
+
+  function pushRawUndoSnapshot(snap) {
+    if (!snap) return;
     if (state.undoStack.length && state.undoStack[state.undoStack.length - 1] === snap) {
       return;
     }
@@ -101,6 +115,10 @@
     if (state.undoStack.length > 40) state.undoStack.shift();
     state.redoStack = [];
     refreshUndoButtons();
+  }
+
+  function pushUndoSnapshot() {
+    pushRawUndoSnapshot(captureDocSnapshotString());
   }
 
   function askStudioPrompt(title, defaultValue = "", placeholder = "") {
@@ -147,37 +165,33 @@
 
   function undo() {
     if (!state.doc || !state.undoStack.length) return;
-    state.redoStack.push(
-      JSON.stringify({
-        cues: state.doc.cues,
-        glossary: state.doc.glossary,
-        scene_summary: state.doc.scene_summary,
-      })
-    );
+    const curSnap = captureDocSnapshotString();
+    if (curSnap) state.redoStack.push(curSnap);
     const prev = JSON.parse(state.undoStack.pop());
     state.doc.cues = prev.cues;
     state.doc.glossary = prev.glossary;
     state.doc.scene_summary = prev.scene_summary;
+    $("scene-summary-input").value = state.doc.scene_summary || "";
     refreshUndoButtons();
     renderAll();
+    const activeCue = state.doc.cues.find((c) => c.id === state.activeCueId);
+    if (activeCue) updateStageOverlayForCue(activeCue);
     scheduleAutoSave();
   }
 
   function redo() {
     if (!state.doc || !state.redoStack.length) return;
-    state.undoStack.push(
-      JSON.stringify({
-        cues: state.doc.cues,
-        glossary: state.doc.glossary,
-        scene_summary: state.doc.scene_summary,
-      })
-    );
+    const curSnap = captureDocSnapshotString();
+    if (curSnap) state.undoStack.push(curSnap);
     const next = JSON.parse(state.redoStack.pop());
     state.doc.cues = next.cues;
     state.doc.glossary = next.glossary;
     state.doc.scene_summary = next.scene_summary;
+    $("scene-summary-input").value = state.doc.scene_summary || "";
     refreshUndoButtons();
     renderAll();
+    const activeCue = state.doc.cues.find((c) => c.id === state.activeCueId);
+    if (activeCue) updateStageOverlayForCue(activeCue);
     scheduleAutoSave();
   }
 
@@ -190,17 +204,37 @@
     if (!state.doc) return;
     $("doc-save-state").textContent = "保存中…";
     try {
-      localStorage.setItem("listento_studio_last_doc", JSON.stringify(state.doc));
+      if (state.doc.doc_id) {
+        localStorage.setItem("listento_last_doc_id", state.doc.doc_id);
+      }
+      const serialized = JSON.stringify(state.doc);
+      if (serialized.length < 1800000) {
+        localStorage.setItem("listento_studio_last_doc", serialized);
+      } else {
+        localStorage.removeItem("listento_studio_last_doc");
+      }
     } catch (_) {}
     clearTimeout(state.saveTimer);
     state.saveTimer = setTimeout(async () => {
+      if (!state.doc) return;
       try {
-        await fetch("/api/projects/save", {
+        const resp = await fetch("/api/projects/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(state.doc),
         });
-        $("doc-save-state").textContent = "已自动保存";
+        if (resp.ok) {
+          const saved = await resp.json();
+          if (saved.doc_id && state.doc) {
+            state.doc.doc_id = saved.doc_id;
+            try {
+              localStorage.setItem("listento_last_doc_id", saved.doc_id);
+            } catch (_) {}
+          }
+          $("doc-save-state").textContent = "已自动保存";
+        } else {
+          $("doc-save-state").textContent = "本地已缓存";
+        }
       } catch (_) {
         $("doc-save-state").textContent = "本地已缓存";
       }
@@ -211,8 +245,10 @@
   async function init() {
     const savedTheme = localStorage.getItem("listento_theme") || "dark";
     document.documentElement.setAttribute("data-theme", savedTheme);
+    state.waveformCollapsed = localStorage.getItem("listento_waveform_collapsed") === "1";
 
     bindEvents();
+    bindWaveformEvents();
 
     try {
       const resp = await fetch("/api/meta");
@@ -231,16 +267,33 @@
       toast("无法连接本地后端服务，请检查服务是否已启动。", "error");
     }
 
-    // Restore cached session if available
+    // Restore last project from server disk first (safe for >5MB ASS files), fallback to localStorage
+    let restored = false;
     try {
-      const cached = localStorage.getItem("listento_studio_last_doc");
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed && Array.isArray(parsed.cues) && parsed.cues.length > 0) {
-          loadDocumentIntoStudio(parsed, false);
+      const lastDocId = localStorage.getItem("listento_last_doc_id");
+      if (lastDocId) {
+        const pResp = await fetch(`/api/projects/${encodeURIComponent(lastDocId)}`);
+        if (pResp.ok) {
+          const diskDoc = await pResp.json();
+          if (diskDoc && Array.isArray(diskDoc.cues) && diskDoc.cues.length > 0) {
+            loadDocumentIntoStudio(diskDoc, false);
+            restored = true;
+          }
         }
       }
     } catch (_) {}
+
+    if (!restored) {
+      try {
+        const cached = localStorage.getItem("listento_studio_last_doc");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && Array.isArray(parsed.cues) && parsed.cues.length > 0) {
+            loadDocumentIntoStudio(parsed, false);
+          }
+        }
+      } catch (_) {}
+    }
   }
 
   function populateLanguageSelectors(languages) {
@@ -522,11 +575,98 @@
     video.hidden = false;
     $("stage-placeholder").hidden = true;
     toast(`已挂载本地媒体：${file.name}`, "success");
+    decodeMediaWaveform(file);
+  }
+
+  async function decodeMediaWaveform(file) {
+    state.waveformPeaks = null;
+    state.waveformDurationMs = 0;
+    const statusEl = $("waveform-status");
+    if (!file) return;
+
+    if (file.size > 140 * 1024 * 1024) {
+      if (statusEl) {
+        statusEl.textContent = "💡 大体积媒体免解码流畅模式 · 拖拽色块平移 · 拖左右边缘修剪起止点";
+      }
+      drawWaveformTimeline();
+      return;
+    }
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) {
+      drawWaveformTimeline();
+      return;
+    }
+
+    if (statusEl) statusEl.textContent = "⏳ 正在解析本地音轨声波峰谷…";
+    try {
+      const arrayBuf = await file.arrayBuffer();
+      const ctx = new AudioCtx();
+      let audioBuf;
+      try {
+        audioBuf = await ctx.decodeAudioData(arrayBuf);
+      } finally {
+        try {
+          await ctx.close();
+        } catch (_) {}
+      }
+
+      const ch0 = audioBuf.getChannelData(0);
+      const ch1 = audioBuf.numberOfChannels > 1 ? audioBuf.getChannelData(1) : null;
+      const bucketCount = Math.min(12000, Math.max(1200, Math.ceil(audioBuf.duration * 40)));
+      const samplesPerBucket = Math.max(1, Math.floor(ch0.length / bucketCount));
+      const peaks = new Float32Array(bucketCount);
+      const sortedSample = [];
+
+      for (let i = 0; i < bucketCount; i++) {
+        const start = i * samplesPerBucket;
+        const end = Math.min(ch0.length, start + samplesPerBucket);
+        const stride = Math.max(1, Math.floor((end - start) / 64));
+        let maxAmp = 0;
+        for (let j = start; j < end; j += stride) {
+          const v = ch1 ? (Math.abs(ch0[j]) + Math.abs(ch1[j])) * 0.5 : Math.abs(ch0[j]);
+          if (v > maxAmp) maxAmp = v;
+        }
+        peaks[i] = maxAmp;
+        if (i % 4 === 0) sortedSample.push(maxAmp);
+      }
+
+      sortedSample.sort((a, b) => a - b);
+      const normRef = Math.max(0.02, sortedSample[Math.floor(sortedSample.length * 0.98)] || 0.5);
+      for (let i = 0; i < bucketCount; i++) {
+        peaks[i] = Math.min(1, peaks[i] / normRef);
+      }
+
+      state.waveformPeaks = peaks;
+      state.waveformDurationMs = Math.round(audioBuf.duration * 1000);
+      if (statusEl) {
+        statusEl.textContent = "✅ 真实音轨声波已就绪 · 拖拽色块平移 · 拖左右边缘微调起止点";
+      }
+      drawWaveformTimeline();
+    } catch (_) {
+      if (statusEl) {
+        statusEl.textContent = "💡 音轨免解码预览 · 可直接拖拽时间轴色块平移或修剪起止点";
+      }
+      drawWaveformTimeline();
+    }
+  }
+
+  function syncWaveformVisibilityUI() {
+    const dock = $("timeline-dock");
+    const btn = $("btn-toggle-waveform");
+    if (!dock || !btn) return;
+    const show = Boolean(state.doc) && !state.waveformCollapsed;
+    dock.hidden = !show;
+    btn.classList.toggle("active-toggle", show);
+    if (show) {
+      requestAnimationFrame(() => drawWaveformTimeline());
+    }
   }
 
   function loadDocumentIntoStudio(doc, resetHistory = true) {
     state.doc = doc;
     state.cueSuggestions = {};
+    state.renderLimit = 250;
     if (resetHistory) {
       state.undoStack = [];
       state.redoStack = [];
@@ -550,10 +690,12 @@
     $("btn-open-export").disabled = !hasDoc;
     $("btn-translate-all").disabled = !hasDoc;
     $("btn-translate-untranslated").disabled = !hasDoc;
+    $("btn-toggle-waveform").disabled = !hasDoc;
     $("btn-open-qa").disabled = !hasDoc;
     $("btn-split-bilingual").disabled = !hasDoc;
     $("btn-time-shift").disabled = !hasDoc;
     $("btn-toggle-search").disabled = !hasDoc;
+    $("btn-clear-translations").disabled = !hasDoc;
     $("btn-extract-glossary").disabled = !hasDoc;
 
     const firstDialogue = doc.cues.find((c) => !c.is_special) || doc.cues[0];
@@ -561,9 +703,83 @@
     state.simTimeMs = firstDialogue ? firstDialogue.start_ms : 0;
 
     renderWarnings();
-    renderAll();
+    syncWaveformVisibilityUI();
+    renderAll(false);
     if (firstDialogue) updateStageOverlayForCue(firstDialogue);
     scheduleAutoSave();
+  }
+
+  function closeCurrentDocument() {
+    if (state.abortController) state.abortController.abort();
+    stopSimPlayback();
+    clearTimeout(state.saveTimer);
+    state.doc = null;
+    state.activeCueId = null;
+    state.cueSuggestions = {};
+    state.undoStack = [];
+    state.redoStack = [];
+    refreshUndoButtons();
+
+    try {
+      localStorage.removeItem("listento_last_doc_id");
+      localStorage.removeItem("listento_studio_last_doc");
+    } catch (_) {}
+
+    $("cue-table-wrap").hidden = true;
+    $("doc-meta-pill").hidden = true;
+    $("warnings-strip").hidden = true;
+    $("timeline-dock").hidden = true;
+    $("search-bar").hidden = true;
+    $("shift-bar").hidden = true;
+    $("welcome-state").hidden = false;
+
+    [
+      "btn-open-export",
+      "btn-translate-all",
+      "btn-translate-untranslated",
+      "btn-toggle-waveform",
+      "btn-open-qa",
+      "btn-split-bilingual",
+      "btn-time-shift",
+      "btn-toggle-search",
+      "btn-clear-translations",
+      "btn-extract-glossary",
+    ].forEach((id) => {
+      if ($(id)) $(id).disabled = true;
+    });
+    $("btn-toggle-waveform").classList.remove("active-toggle");
+
+    $("count-all").textContent = "0";
+    $("count-untranslated").textContent = "0";
+    $("count-translated").textContent = "0";
+    $("count-long").textContent = "0";
+    $("glossary-count").textContent = "0";
+    $("glossary-list").innerHTML = `<div class="empty-mini">添加专有名词或人名后，AI 全文精翻与单句润色将严格统一译法。</div>`;
+    $("overlay-primary").textContent = "";
+    $("overlay-secondary").textContent = "";
+    toast("已关闭当前字幕文档（历史进度仍可在「🗂 历史工程」随时恢复）", "info");
+  }
+
+  function clearAllTranslations() {
+    if (!state.doc) return;
+    const hasAny = state.doc.cues.some((c) => !c.is_special && (c.target_text || "").trim().length > 0);
+    if (!hasAny) {
+      toast("当前文档暂无译文可清空。", "info");
+      return;
+    }
+    pushUndoSnapshot();
+    state.doc.cues.forEach((c) => {
+      if (!c.is_special) {
+        c.target_text = "";
+        c.status = "untranslated";
+      }
+    });
+    state.cueSuggestions = {};
+    renderAll(true);
+    const cur = state.doc.cues.find((c) => c.id === state.activeCueId);
+    if (cur) updateStageOverlayForCue(cur);
+    scheduleAutoSave();
+    toast("已清空当前文档全部译文（按 Cmd/Ctrl+Z 可一键撤销恢复）", "success");
   }
 
   function renderWarnings() {
@@ -584,11 +800,11 @@
     };
   }
 
-  function renderAll() {
+  function renderAll(preserveScroll = true) {
     if (!state.doc) return;
     updateCounts();
     renderGlossary();
-    renderCueList();
+    renderCueList(preserveScroll);
   }
 
   function updateCounts() {
@@ -661,200 +877,286 @@
     return filtered;
   }
 
+  function estimateTextareaRows(text) {
+    if (!text) return 1;
+    const lines = String(text).split("\n");
+    let rows = 0;
+    for (const line of lines) {
+      rows += Math.max(1, Math.ceil(line.length / 28));
+    }
+    return Math.min(8, Math.max(1, rows));
+  }
+
   function autoResizeTextarea(el) {
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.max(38, el.scrollHeight)}px`;
   }
 
-  function renderCueList() {
+  function createCueRowElement(cue) {
+    const row = document.createElement("div");
+    row.className = `cue-row${cue.id === state.activeCueId ? " active" : ""}${cue.is_special ? " special-row" : ""}`;
+    row.dataset.cueId = cue.id;
+
+    const durSec = ((cue.end_ms - cue.start_ms) / 1000).toFixed(1);
+    const cps = computeCps(cue);
+    const longWarn = isCueLongWarning(cue);
+    const hasTgt = Boolean((cue.target_text || "").trim());
+
+    // Column 1: Meta
+    const metaCol = document.createElement("div");
+    metaCol.className = "cue-meta";
+    metaCol.innerHTML = `
+      <div class="cue-id-line">
+        <span class="cue-num">#${cue.id}</span>
+        <span class="badge-mini">${durSec}s</span>
+        ${cue.speaker ? `<span class="badge-mini badge-speaker">${escapeHtml(cue.speaker)}</span>` : ""}
+        ${cue.style && cue.style !== "Default" ? `<span class="badge-mini">${escapeHtml(cue.style)}</span>` : ""}
+        ${cue.is_special ? `<span class="badge-mini">特效保留</span>` : ""}
+        ${!cue.is_special && hasTgt && !longWarn ? `<span class="badge-mini badge-done">已译</span>` : ""}
+        ${longWarn ? `<span class="badge-mini badge-cps-warn" title="每秒约 ${cps.toFixed(1)} 字，建议点击 ✨ 精简缩字">${cps.toFixed(0)}字/s</span>` : ""}
+      </div>
+      <div class="cue-times">
+        <input class="time-input" data-time-field="start_ms" value="${msToDisplay(cue.start_ms)}" title="起始时间 (点击微调)" />
+        <input class="time-input" data-time-field="end_ms" value="${msToDisplay(cue.end_ms)}" title="结束时间 (点击微调)" />
+      </div>
+    `;
+
+    // Column 2: Source
+    const srcCol = document.createElement("div");
+    srcCol.className = "cue-source-box";
+    srcCol.title = "点击定位预览；双击可微调原文";
+    if (cue.ass_tags) {
+      const tagChip = document.createElement("div");
+      tagChip.className = "ass-tag-chip";
+      tagChip.textContent = cue.ass_tags;
+      srcCol.appendChild(tagChip);
+    }
+    const srcSpan = document.createElement("div");
+    srcSpan.textContent = cue.source_text;
+    srcCol.appendChild(srcSpan);
+
+    srcCol.addEventListener("click", () => activateCue(cue.id, true));
+    srcCol.addEventListener("dblclick", async () => {
+      const edited = await askStudioPrompt(`编辑 #${cue.id} 原文`, cue.source_text, "输入修改后的原文字幕…");
+      if (edited !== null && edited !== cue.source_text) {
+        pushUndoSnapshot();
+        cue.source_text = edited;
+        renderAll(true);
+        scheduleAutoSave();
+      }
+    });
+
+    // Column 3: Target Editor + AI Suggestions
+    const tgtWrap = document.createElement("div");
+    tgtWrap.className = "cue-target-wrap";
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "cue-target-input";
+    textarea.rows = estimateTextareaRows(cue.target_text);
+    textarea.disabled = cue.is_special;
+    textarea.placeholder = cue.is_special ? "（ASS 注释/特效绘图行，导出自动原样保留）" : "输入或精修译文… (Tab 跳至下一行)";
+    textarea.value = cue.target_text || "";
+    textarea.dataset.cueInput = cue.id;
+
+    let focusSnap = null;
+    let focusInitialVal = "";
+    let pushedFocusUndo = false;
+
+    textarea.addEventListener("focus", () => {
+      focusSnap = captureDocSnapshotString();
+      focusInitialVal = cue.target_text || "";
+      pushedFocusUndo = false;
+      autoResizeTextarea(textarea);
+      activateCue(cue.id, false);
+    });
+
+    textarea.addEventListener("input", () => {
+      if (!pushedFocusUndo && textarea.value !== focusInitialVal && focusSnap) {
+        pushRawUndoSnapshot(focusSnap);
+        pushedFocusUndo = true;
+      }
+      autoResizeTextarea(textarea);
+      cue.target_text = textarea.value;
+      cue.status = textarea.value.trim() ? "edited" : "untranslated";
+      updateStageOverlayForCue(cue);
+      updateCounts();
+      drawWaveformTimeline();
+      scheduleAutoSave();
+    });
+
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const allInputs = Array.from(document.querySelectorAll(".cue-target-input:not(:disabled)"));
+        const idx = allInputs.indexOf(textarea);
+        const nextIdx = e.shiftKey ? idx - 1 : idx + 1;
+        if (!e.shiftKey && nextIdx >= allInputs.length) {
+          appendMoreCueRows(250);
+        }
+        const refreshedInputs = Array.from(document.querySelectorAll(".cue-target-input:not(:disabled)"));
+        if (refreshedInputs[nextIdx]) {
+          refreshedInputs[nextIdx].focus();
+        }
+      } else if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        const allInputs = Array.from(document.querySelectorAll(".cue-target-input:not(:disabled)"));
+        const idx = allInputs.indexOf(textarea);
+        const nextIdx = e.key === "ArrowUp" ? idx - 1 : idx + 1;
+        if (e.key === "ArrowDown" && nextIdx >= allInputs.length) {
+          appendMoreCueRows(250);
+        }
+        const refreshedInputs = Array.from(document.querySelectorAll(".cue-target-input:not(:disabled)"));
+        if (refreshedInputs[nextIdx]) {
+          refreshedInputs[nextIdx].focus();
+          const targetCueId = Number(refreshedInputs[nextIdx].dataset.cueInput);
+          if (targetCueId) activateCue(targetCueId, true);
+        }
+      } else if (e.altKey && e.key === "Enter") {
+        e.preventDefault();
+        runSingleCueRewrite(cue, "retranslate", "");
+      }
+    });
+
+    tgtWrap.appendChild(textarea);
+
+    // Render AI single-cue suggestions if present
+    const sug = state.cueSuggestions[cue.id];
+    if (sug) {
+      const sugBox = document.createElement("div");
+      sugBox.className = "ai-suggestions";
+      const allOptions = [sug.best, ...(sug.alternatives || [])].filter(Boolean);
+      sugBox.innerHTML = `
+        <div class="ai-sug-reason">✨ ${escapeHtml(sug.reason || "AI 候选方案（点击即可采纳）：")}</div>
+        <div class="ai-sug-chips"></div>
+      `;
+      const chipsWrap = sugBox.querySelector(".ai-sug-chips");
+      allOptions.forEach((optText, i) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "sug-chip";
+        chip.textContent = `${i === 0 ? "★ 推荐：" : "备选："}${optText}`;
+        chip.addEventListener("click", () => {
+          pushUndoSnapshot();
+          cue.target_text = optText;
+          cue.status = "polished";
+          delete state.cueSuggestions[cue.id];
+          renderCueList(true);
+          updateCounts();
+          updateStageOverlayForCue(cue);
+          scheduleAutoSave();
+        });
+        chipsWrap.appendChild(chip);
+      });
+      tgtWrap.appendChild(sugBox);
+    }
+
+    // Column 4: Row Actions
+    const actCol = document.createElement("div");
+    actCol.className = "cue-actions";
+    actCol.innerHTML = `
+      <button class="btn btn-icon btn-sm" data-act="play" type="button" title="定位并预览此句">▶</button>
+      <button class="btn btn-icon btn-sm" data-act="ai" type="button" ${cue.is_special ? "disabled" : ""} title="AI 单句精修 / 重翻 / 缩字">✨</button>
+      <button class="btn btn-icon btn-sm" data-act="more" type="button" title="插入 / 合并 / 删除行">⋯</button>
+    `;
+
+    actCol.querySelector('[data-act="play"]').addEventListener("click", () => {
+      activateCue(cue.id, true);
+    });
+    actCol.querySelector('[data-act="ai"]').addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleAiRowPopover(cue, actCol);
+    });
+    actCol.querySelector('[data-act="more"]').addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleRowManagePopover(cue, actCol);
+    });
+
+    // Bind timestamp inline edits
+    metaCol.querySelectorAll(".time-input").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        const field = inp.dataset.timeField;
+        const parsedMs = parseDisplayToMs(inp.value);
+        if (parsedMs === null) {
+          inp.value = msToDisplay(cue[field]);
+          toast("时间格式应为 HH:MM:SS.mmm", "error");
+          return;
+        }
+        pushUndoSnapshot();
+        cue[field] = parsedMs;
+        if (cue.end_ms <= cue.start_ms) cue.end_ms = cue.start_ms + 300;
+        renderCueList(true);
+        scheduleAutoSave();
+      });
+    });
+
+    row.appendChild(metaCol);
+    row.appendChild(srcCol);
+    row.appendChild(tgtWrap);
+    row.appendChild(actCol);
+    return row;
+  }
+
+  function createLoadMoreBanner(renderedCount, totalCount) {
+    const banner = document.createElement("div");
+    banner.className = "load-more-banner";
+    banner.id = "cue-load-more-banner";
+    const remain = totalCount - renderedCount;
+    banner.innerHTML = `
+      <span>已高效渲染前 <strong>${renderedCount}</strong> / ${totalCount} 条字幕</span>
+      <button class="btn btn-subtle btn-sm" type="button">继续加载后续 ${Math.min(250, remain)} 条</button>
+    `;
+    banner.querySelector("button").addEventListener("click", () => appendMoreCueRows(250));
+    return banner;
+  }
+
+  function appendMoreCueRows(step = 250) {
     const container = $("cue-list");
+    const cues = getFilteredCues();
+    if (state.renderLimit >= cues.length) return;
+
+    const oldBanner = $("cue-load-more-banner");
+    if (oldBanner) oldBanner.remove();
+
+    const prevLimit = state.renderLimit;
+    state.renderLimit = Math.min(cues.length, state.renderLimit + step);
+    const slice = cues.slice(prevLimit, state.renderLimit);
+
+    const frag = document.createDocumentFragment();
+    slice.forEach((cue) => frag.appendChild(createCueRowElement(cue)));
+    if (state.renderLimit < cues.length) {
+      frag.appendChild(createLoadMoreBanner(state.renderLimit, cues.length));
+    }
+    container.appendChild(frag);
+  }
+
+  function ensureCueRendered(cueId) {
+    const cues = getFilteredCues();
+    const idx = cues.findIndex((c) => c.id === cueId);
+    if (idx >= state.renderLimit) {
+      state.renderLimit = Math.min(cues.length, idx + 120);
+      renderCueList(true);
+    }
+  }
+
+  function renderCueList(preserveScroll = true) {
+    const container = $("cue-list");
+    const prevScroll = preserveScroll ? container.scrollTop : 0;
     const cues = getFilteredCues();
     container.innerHTML = "";
 
+    const visible = cues.slice(0, state.renderLimit);
     const frag = document.createDocumentFragment();
-    cues.forEach((cue) => {
-      const row = document.createElement("div");
-      row.className = `cue-row${cue.id === state.activeCueId ? " active" : ""}${cue.is_special ? " special-row" : ""}`;
-      row.dataset.cueId = cue.id;
-
-      const durSec = ((cue.end_ms - cue.start_ms) / 1000).toFixed(1);
-      const cps = computeCps(cue);
-      const longWarn = isCueLongWarning(cue);
-      const hasTgt = Boolean((cue.target_text || "").trim());
-
-      // Column 1: Meta
-      const metaCol = document.createElement("div");
-      metaCol.className = "cue-meta";
-      metaCol.innerHTML = `
-        <div class="cue-id-line">
-          <span class="cue-num">#${cue.id}</span>
-          <span class="badge-mini">${durSec}s</span>
-          ${cue.speaker ? `<span class="badge-mini badge-speaker">${escapeHtml(cue.speaker)}</span>` : ""}
-          ${cue.style && cue.style !== "Default" ? `<span class="badge-mini">${escapeHtml(cue.style)}</span>` : ""}
-          ${cue.is_special ? `<span class="badge-mini">特效保留</span>` : ""}
-          ${!cue.is_special && hasTgt && !longWarn ? `<span class="badge-mini badge-done">已译</span>` : ""}
-          ${longWarn ? `<span class="badge-mini badge-cps-warn" title="每秒约 ${cps.toFixed(1)} 字，建议点击 ✨ 精简缩字">${cps.toFixed(0)}字/s</span>` : ""}
-        </div>
-        <div class="cue-times">
-          <input class="time-input" data-time-field="start_ms" value="${msToDisplay(cue.start_ms)}" title="起始时间 (点击微调)" />
-          <input class="time-input" data-time-field="end_ms" value="${msToDisplay(cue.end_ms)}" title="结束时间 (点击微调)" />
-        </div>
-      `;
-
-      // Column 2: Source
-      const srcCol = document.createElement("div");
-      srcCol.className = "cue-source-box";
-      srcCol.title = "点击定位预览；双击可微调原文";
-      if (cue.ass_tags) {
-        const tagChip = document.createElement("div");
-        tagChip.className = "ass-tag-chip";
-        tagChip.textContent = cue.ass_tags;
-        srcCol.appendChild(tagChip);
-      }
-      const srcSpan = document.createElement("div");
-      srcSpan.textContent = cue.source_text;
-      srcCol.appendChild(srcSpan);
-
-      srcCol.addEventListener("click", () => activateCue(cue.id, true));
-      srcCol.addEventListener("dblclick", async () => {
-        const edited = await askStudioPrompt(`编辑 #${cue.id} 原文`, cue.source_text, "输入修改后的原文字幕…");
-        if (edited !== null && edited !== cue.source_text) {
-          pushUndoSnapshot();
-          cue.source_text = edited;
-          renderAll();
-          scheduleAutoSave();
-        }
-      });
-
-      // Column 3: Target Editor + AI Suggestions
-      const tgtWrap = document.createElement("div");
-      tgtWrap.className = "cue-target-wrap";
-
-      const textarea = document.createElement("textarea");
-      textarea.className = "cue-target-input";
-      textarea.rows = 1;
-      textarea.disabled = cue.is_special;
-      textarea.placeholder = cue.is_special ? "（ASS 注释/特效绘图行，导出自动原样保留）" : "输入或精修译文… (Tab 跳至下一行)";
-      textarea.value = cue.target_text || "";
-      textarea.dataset.cueInput = cue.id;
-
-      textarea.addEventListener("focus", () => activateCue(cue.id, false));
-      textarea.addEventListener("input", () => {
-        autoResizeTextarea(textarea);
-        cue.target_text = textarea.value;
-        cue.status = textarea.value.trim() ? "edited" : "untranslated";
-        updateStageOverlayForCue(cue);
-        updateCounts();
-        scheduleAutoSave();
-      });
-      textarea.addEventListener("keydown", (e) => {
-        if (e.key === "Tab") {
-          e.preventDefault();
-          const allInputs = Array.from(document.querySelectorAll(".cue-target-input:not(:disabled)"));
-          const idx = allInputs.indexOf(textarea);
-          const nextIdx = e.shiftKey ? idx - 1 : idx + 1;
-          if (allInputs[nextIdx]) {
-            allInputs[nextIdx].focus();
-          }
-        } else if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-          e.preventDefault();
-          const allInputs = Array.from(document.querySelectorAll(".cue-target-input:not(:disabled)"));
-          const idx = allInputs.indexOf(textarea);
-          const nextIdx = e.key === "ArrowUp" ? idx - 1 : idx + 1;
-          if (allInputs[nextIdx]) {
-            allInputs[nextIdx].focus();
-            const targetCueId = Number(allInputs[nextIdx].dataset.cueInput);
-            if (targetCueId) activateCue(targetCueId, true);
-          }
-        } else if (e.altKey && e.key === "Enter") {
-          e.preventDefault();
-          runSingleCueRewrite(cue, "retranslate", "");
-        }
-      });
-
-      tgtWrap.appendChild(textarea);
-
-      // Render AI single-cue suggestions if present
-      const sug = state.cueSuggestions[cue.id];
-      if (sug) {
-        const sugBox = document.createElement("div");
-        sugBox.className = "ai-suggestions";
-        const allOptions = [sug.best, ...(sug.alternatives || [])].filter(Boolean);
-        sugBox.innerHTML = `
-          <div class="ai-sug-reason">✨ ${escapeHtml(sug.reason || "AI 候选方案（点击即可采纳）：")}</div>
-          <div class="ai-sug-chips"></div>
-        `;
-        const chipsWrap = sugBox.querySelector(".ai-sug-chips");
-        allOptions.forEach((optText, i) => {
-          const chip = document.createElement("button");
-          chip.type = "button";
-          chip.className = "sug-chip";
-          chip.textContent = `${i === 0 ? "★ 推荐：" : "备选："}${optText}`;
-          chip.addEventListener("click", () => {
-            pushUndoSnapshot();
-            cue.target_text = optText;
-            cue.status = "polished";
-            delete state.cueSuggestions[cue.id];
-            renderCueList();
-            updateCounts();
-            updateStageOverlayForCue(cue);
-            scheduleAutoSave();
-          });
-          chipsWrap.appendChild(chip);
-        });
-        tgtWrap.appendChild(sugBox);
-      }
-
-      // Column 4: Row Actions
-      const actCol = document.createElement("div");
-      actCol.className = "cue-actions";
-      actCol.innerHTML = `
-        <button class="btn btn-icon btn-sm" data-act="play" type="button" title="定位并预览此句">▶</button>
-        <button class="btn btn-icon btn-sm" data-act="ai" type="button" ${cue.is_special ? "disabled" : ""} title="AI 单句精修 / 重翻 / 缩字">✨</button>
-        <button class="btn btn-icon btn-sm" data-act="more" type="button" title="插入 / 合并 / 删除行">⋯</button>
-      `;
-
-      actCol.querySelector('[data-act="play"]').addEventListener("click", () => {
-        activateCue(cue.id, true);
-      });
-      actCol.querySelector('[data-act="ai"]').addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleAiRowPopover(cue, actCol);
-      });
-      actCol.querySelector('[data-act="more"]').addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleRowManagePopover(cue, actCol);
-      });
-
-      // Bind timestamp inline edits
-      metaCol.querySelectorAll(".time-input").forEach((inp) => {
-        inp.addEventListener("change", () => {
-          const field = inp.dataset.timeField;
-          const parsedMs = parseDisplayToMs(inp.value);
-          if (parsedMs === null) {
-            inp.value = msToDisplay(cue[field]);
-            toast("时间格式应为 HH:MM:SS.mmm", "error");
-            return;
-          }
-          pushUndoSnapshot();
-          cue[field] = parsedMs;
-          if (cue.end_ms <= cue.start_ms) cue.end_ms = cue.start_ms + 300;
-          renderCueList();
-          scheduleAutoSave();
-        });
-      });
-
-      row.appendChild(metaCol);
-      row.appendChild(srcCol);
-      row.appendChild(tgtWrap);
-      row.appendChild(actCol);
-      frag.appendChild(row);
-
-      requestAnimationFrame(() => autoResizeTextarea(textarea));
-    });
-
+    visible.forEach((cue) => frag.appendChild(createCueRowElement(cue)));
+    if (cues.length > visible.length) {
+      frag.appendChild(createLoadMoreBanner(visible.length, cues.length));
+    }
     container.appendChild(frag);
+
+    if (preserveScroll) {
+      container.scrollTop = prevScroll;
+    }
+    drawWaveformTimeline();
   }
 
   function closeAllPopovers() {
@@ -1011,6 +1313,7 @@
   // Activate Cue & Sync Cinema Stage
   function activateCue(cueId, seekMedia = false) {
     state.activeCueId = cueId;
+    ensureCueRendered(cueId);
     document.querySelectorAll(".cue-row").forEach((r) => {
       r.classList.toggle("active", Number(r.dataset.cueId) === cueId);
     });
@@ -1022,10 +1325,13 @@
       if (state.hasMediaFile) {
         const video = $("media-player");
         video.currentTime = cue.start_ms / 1000;
+        drawWaveformTimeline();
       } else {
         state.simTimeMs = cue.start_ms;
         updatePlayerControlsUI(cue.start_ms);
       }
+    } else {
+      drawWaveformTimeline();
     }
   }
 
@@ -1080,6 +1386,7 @@
     if (hit) {
       if (state.activeCueId !== hit.id) {
         state.activeCueId = hit.id;
+        ensureCueRendered(hit.id);
         document.querySelectorAll(".cue-row").forEach((r) => {
           const match = Number(r.dataset.cueId) === hit.id;
           r.classList.toggle("active", match);
@@ -1091,6 +1398,7 @@
       $("overlay-primary").textContent = "";
       $("overlay-secondary").textContent = "";
     }
+    drawWaveformTimeline();
   }
 
   function togglePlayback() {
@@ -1398,6 +1706,10 @@
     if (id === "modal-qa") {
       runAndRenderQaCheck();
     }
+    if (id === "modal-batch") {
+      $("batch-export-result").hidden = true;
+      renderBatchQueue();
+    }
     $(id).hidden = false;
   }
 
@@ -1596,19 +1908,44 @@
       dragDepth = 0;
       $("drop-overlay").hidden = true;
       const files = Array.from(e.dataTransfer?.files || []);
+      const subFiles = [];
+      const mediaFiles = [];
       for (const f of files) {
         const ext = f.name.split(".").pop().toLowerCase();
         if (["srt", "ass", "ssa", "vtt"].includes(ext)) {
-          uploadSubtitleFile(f);
-        } else if (f.type.startsWith("video/") || f.type.startsWith("audio/") || ["mp4", "mkv", "mov", "webm", "mp3", "wav", "m4a", "flac"].includes(ext)) {
-          mountMediaFile(f);
-          if (!state.doc) {
-            prepareAsrMediaFile(f);
-            openModal("modal-asr");
-          }
+          subFiles.push(f);
+        } else if (
+          f.type.startsWith("video/") ||
+          f.type.startsWith("audio/") ||
+          ["mp4", "mkv", "mov", "webm", "mp3", "wav", "m4a", "flac"].includes(ext)
+        ) {
+          mediaFiles.push(f);
         } else {
           toast(`不支持的文件类型：${f.name}`, "error");
         }
+      }
+
+      if (subFiles.length > 1 || (subFiles.length === 1 && !$("modal-batch").hidden)) {
+        openModal("modal-batch");
+        enqueueBatchSubtitleFiles(subFiles);
+      } else if (subFiles.length === 1) {
+        uploadSubtitleFile(subFiles[0]);
+      }
+
+      for (const mf of mediaFiles) {
+        mountMediaFile(mf);
+        if (!state.doc && !subFiles.length) {
+          prepareAsrMediaFile(mf);
+          openModal("modal-asr");
+        }
+      }
+    });
+
+    // Progressive infinite scroll on #cue-list
+    $("cue-list").addEventListener("scroll", (e) => {
+      const el = e.currentTarget;
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 280) {
+        appendMoreCueRows(250);
       }
     });
 
@@ -1618,10 +1955,33 @@
       const next = cur === "dark" ? "light" : "dark";
       document.documentElement.setAttribute("data-theme", next);
       localStorage.setItem("listento_theme", next);
+      drawWaveformTimeline();
     });
 
     $("btn-toggle-sidebar").addEventListener("click", () => {
       $("sidebar").classList.toggle("collapsed");
+      requestAnimationFrame(() => drawWaveformTimeline());
+    });
+
+    $("btn-close-doc").addEventListener("click", closeCurrentDocument);
+    $("btn-clear-translations").addEventListener("click", clearAllTranslations);
+
+    $("btn-toggle-waveform").addEventListener("click", () => {
+      state.waveformCollapsed = !state.waveformCollapsed;
+      localStorage.setItem("listento_waveform_collapsed", state.waveformCollapsed ? "1" : "0");
+      syncWaveformVisibilityUI();
+    });
+    $("btn-close-waveform").addEventListener("click", () => {
+      state.waveformCollapsed = true;
+      localStorage.setItem("listento_waveform_collapsed", "1");
+      syncWaveformVisibilityUI();
+    });
+    document.querySelectorAll("[data-wf-zoom]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.waveformZoom = Number(btn.dataset.wfZoom) || 1;
+        document.querySelectorAll("[data-wf-zoom]").forEach((b) => b.classList.toggle("active", b === btn));
+        drawWaveformTimeline();
+      });
     });
 
     // Undo / Redo + Shortcuts
@@ -1741,8 +2101,9 @@
     document.querySelectorAll("#filter-pills .pill").forEach((pill) => {
       pill.addEventListener("click", () => {
         state.filter = pill.dataset.filter;
+        state.renderLimit = 250;
         document.querySelectorAll("#filter-pills .pill").forEach((p) => p.classList.toggle("active", p === pill));
-        renderCueList();
+        renderCueList(false);
       });
     });
 
@@ -1753,23 +2114,27 @@
       if (!bar.hidden) $("search-input").focus();
       else {
         state.searchQuery = "";
+        state.renderLimit = 250;
         $("search-input").value = "";
-        renderCueList();
+        renderCueList(false);
       }
     });
     $("btn-close-search").addEventListener("click", () => {
       $("search-bar").hidden = true;
       state.searchQuery = "";
+      state.renderLimit = 250;
       $("search-input").value = "";
-      renderCueList();
+      renderCueList(false);
     });
     $("search-input").addEventListener("input", (e) => {
       state.searchQuery = e.target.value;
-      renderCueList();
+      state.renderLimit = 250;
+      renderCueList(false);
     });
     $("search-scope").addEventListener("change", (e) => {
       state.searchScope = e.target.value;
-      renderCueList();
+      state.renderLimit = 250;
+      renderCueList(false);
     });
     $("btn-replace-all").addEventListener("click", () => {
       const findStr = $("search-input").value;
@@ -1834,14 +2199,56 @@
       if (state.abortController) state.abortController.abort();
     });
 
-    // Settings, ASR, Projects, QA, Shortcuts, Export Modals
+    // Settings, ASR, Batch, Projects, QA, Shortcuts, Export Modals
     $("btn-open-settings").addEventListener("click", () => openModal("modal-settings"));
     $("btn-open-export").addEventListener("click", () => openModal("modal-export"));
     $("btn-open-asr").addEventListener("click", () => openModal("modal-asr"));
     $("btn-welcome-asr").addEventListener("click", () => openModal("modal-asr"));
+    $("btn-open-batch").addEventListener("click", () => openModal("modal-batch"));
+    $("btn-welcome-batch").addEventListener("click", () => openModal("modal-batch"));
     $("btn-open-projects").addEventListener("click", () => openModal("modal-projects"));
     $("btn-open-qa").addEventListener("click", () => openModal("modal-qa"));
     $("btn-open-shortcuts").addEventListener("click", () => openModal("modal-shortcuts"));
+
+    $("batch-files-input").addEventListener("change", (e) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length) enqueueBatchSubtitleFiles(files);
+      e.target.value = "";
+    });
+    $("btn-batch-add-current").addEventListener("click", () => {
+      if (!state.doc) {
+        toast("当前编辑台尚未打开字幕文档。", "info");
+        return;
+      }
+      syncDocContextFields();
+      const exists = state.batchQueue.some((it) => it.doc.doc_id === state.doc.doc_id);
+      if (exists) {
+        toast(`「${state.doc.filename}」已在队列中。`, "info");
+        return;
+      }
+      const cloned = JSON.parse(JSON.stringify(state.doc));
+      const allDone = cloned.cues.filter((c) => !c.is_special).every((c) => (c.target_text || "").trim());
+      state.batchQueue.push({
+        queueId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        doc: cloned,
+        status: allDone ? "done" : "pending",
+        progressPct: allDone ? 100 : 0,
+        errorMsg: "",
+      });
+      renderBatchQueue();
+      toast(`已将「${cloned.filename}」加入批量队列`, "success");
+    });
+    $("btn-batch-clear").addEventListener("click", () => {
+      if (state.batchRunning) return;
+      state.batchQueue = [];
+      $("batch-export-result").hidden = true;
+      renderBatchQueue();
+    });
+    $("btn-start-batch").addEventListener("click", runBatchQueueTranslation);
+    $("btn-stop-batch").addEventListener("click", () => {
+      if (state.batchAbort) state.batchAbort.abort();
+    });
+    $("btn-export-batch-zip").addEventListener("click", exportBatchQueueZip);
 
     $("asr-file-input").addEventListener("change", (e) => {
       const f = e.target.files?.[0];
@@ -1924,7 +2331,9 @@
     $("btn-preview-export").addEventListener("click", async () => {
       if (!state.doc) return;
       syncDocContextFields();
-      const formats = Array.from(document.querySelectorAll(".format-checks input:checked")).map((el) => el.value);
+      const formats = Array.from(document.querySelectorAll("#modal-export .format-checks input:checked")).map(
+        (el) => el.value
+      );
       const fmt = formats[0] || "srt";
       const trackMode = document.querySelector('input[name="track_mode"]:checked')?.value || "bilingual_tgt_top";
       const scale = parseInt($("export-ass-scale").value, 10) || 72;
@@ -2043,7 +2452,9 @@
     $("btn-confirm-export").addEventListener("click", async () => {
       if (!state.doc) return;
       syncDocContextFields();
-      const formats = Array.from(document.querySelectorAll(".format-checks input:checked")).map((el) => el.value);
+      const formats = Array.from(document.querySelectorAll("#modal-export .format-checks input:checked")).map(
+        (el) => el.value
+      );
       if (!formats.length) {
         toast("请至少勾选一种导出格式。", "error");
         return;
@@ -2100,6 +2511,629 @@
         toast(err.message, "error");
       }
     });
+  }
+
+  // Interactive Canvas Audio Waveform & Draggable Cue Timeline
+  function getCurrentPlayheadMs() {
+    if (state.hasMediaFile) {
+      const video = $("media-player");
+      return Math.max(0, (video.currentTime || 0) * 1000);
+    }
+    return Math.max(0, state.simTimeMs || 0);
+  }
+
+  function seekStudioToMs(targetMs) {
+    const clamped = Math.max(0, Math.round(targetMs));
+    if (state.hasMediaFile) {
+      const video = $("media-player");
+      video.currentTime = clamped / 1000;
+      updatePlayerControlsUI(clamped);
+    } else {
+      state.simTimeMs = clamped;
+      updatePlayerControlsUI(clamped);
+    }
+  }
+
+  function getWaveformWindow() {
+    const spanMs = Math.round(20000 / (state.waveformZoom || 1));
+    if (state.wfDrag && state.wfDrag.mode !== "seek") {
+      return { winStart: state.wfDrag.winStart, spanMs };
+    }
+    const curMs = getCurrentPlayheadMs();
+    const winStart = Math.max(0, Math.round(curMs - spanMs * 0.32));
+    state.wfViewStartMs = winStart;
+    return { winStart, spanMs };
+  }
+
+  function formatShortSec(ms) {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  function drawWaveformTimeline() {
+    const dock = $("timeline-dock");
+    const canvas = $("waveform-canvas");
+    if (!dock || dock.hidden || !canvas || !state.doc) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(200, canvas.clientWidth || canvas.parentElement?.clientWidth || 800);
+    const height = 74;
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+    }
+
+    const ctx = canvas.getContext("2d");
+    ctx.save();
+    ctx.scale(dpr, dpr);
+
+    // 1. Background + Ruler header
+    ctx.fillStyle = "#080c14";
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "#0e1524";
+    ctx.fillRect(0, 0, width, 18);
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.16)";
+    ctx.beginPath();
+    ctx.moveTo(0, 18.5);
+    ctx.lineTo(width, 18.5);
+    ctx.stroke();
+
+    const { winStart, spanMs } = getWaveformWindow();
+    const winEnd = winStart + spanMs;
+
+    // 2. Time Ruler Ticks
+    const majorStep = spanMs <= 6000 ? 1000 : spanMs <= 12000 ? 2000 : 5000;
+    const minorStep = majorStep / 5;
+    const firstTick = Math.floor(winStart / minorStep) * minorStep;
+    ctx.font = '10px "JetBrains Mono", Menlo, monospace';
+    ctx.textBaseline = "top";
+
+    for (let t = firstTick; t <= winEnd; t += minorStep) {
+      if (t < 0) continue;
+      const x = ((t - winStart) / spanMs) * width;
+      const isMajor = t % majorStep === 0;
+      ctx.strokeStyle = isMajor ? "rgba(148, 163, 184, 0.42)" : "rgba(148, 163, 184, 0.16)";
+      ctx.beginPath();
+      ctx.moveTo(x, isMajor ? 2 : 12);
+      ctx.lineTo(x, 18);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = "rgba(203, 213, 225, 0.78)";
+        ctx.fillText(formatShortSec(t), x + 4, 3);
+      }
+    }
+
+    // 3. Audio Waveform Peaks or Baseline Grid
+    const midY = 46;
+    if (state.waveformPeaks && state.waveformDurationMs > 0) {
+      const peaks = state.waveformPeaks;
+      const totalBuckets = peaks.length;
+      const durMs = state.waveformDurationMs;
+      const barStep = 3;
+      ctx.fillStyle = "rgba(34, 211, 238, 0.34)";
+      for (let px = 0; px < width; px += barStep) {
+        const tMs = winStart + (px / width) * spanMs;
+        if (tMs < 0 || tMs > durMs) continue;
+        const bIdx = Math.min(totalBuckets - 1, Math.floor((tMs / durMs) * totalBuckets));
+        const amp = peaks[bIdx] || 0;
+        const barH = Math.max(2, amp * 44);
+        ctx.fillRect(px, midY - barH * 0.5, 2, barH);
+      }
+    } else {
+      ctx.strokeStyle = "rgba(99, 102, 241, 0.16)";
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(0, midY);
+      ctx.lineTo(width, midY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // 4. Draggable Subtitle Cue Blocks
+    const cues = state.doc.cues || [];
+    for (let i = 0; i < cues.length; i++) {
+      const cue = cues[i];
+      if (cue.is_special || cue.end_ms < winStart || cue.start_ms > winEnd) continue;
+
+      const x1 = ((cue.start_ms - winStart) / spanMs) * width;
+      const x2 = ((cue.end_ms - winStart) / spanMs) * width;
+      const bw = Math.max(8, x2 - x1);
+      const isActive = cue.id === state.activeCueId;
+      const isLong = isCueLongWarning(cue);
+
+      ctx.fillStyle = isActive
+        ? "rgba(99, 102, 241, 0.42)"
+        : isLong
+          ? "rgba(245, 158, 11, 0.25)"
+          : "rgba(51, 65, 85, 0.46)";
+      ctx.strokeStyle = isActive
+        ? "#818cf8"
+        : isLong
+          ? "rgba(245, 158, 11, 0.72)"
+          : "rgba(148, 163, 184, 0.45)";
+      ctx.lineWidth = isActive ? 1.6 : 1;
+
+      const topY = 22;
+      const boxH = 46;
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(x1, topY, bw, boxH, 5);
+      } else {
+        ctx.rect(x1, topY, bw, boxH);
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      // Left & right trim grip accents
+      ctx.fillStyle = isActive ? "rgba(34, 211, 238, 0.85)" : "rgba(148, 163, 184, 0.45)";
+      ctx.fillRect(x1, topY + 6, 2.5, boxH - 12);
+      ctx.fillRect(x1 + bw - 2.5, topY + 6, 2.5, boxH - 12);
+
+      if (bw > 28) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x1 + 5, topY + 2, bw - 10, boxH - 4);
+        ctx.clip();
+        ctx.fillStyle = isActive ? "#ffffff" : "#e2e8f0";
+        ctx.font = '600 10.5px "Inter", "PingFang SC", sans-serif';
+        ctx.fillText(`#${cue.id}`, x1 + 6, topY + 5);
+        const label = (cue.target_text || cue.source_text || "").replace(/\s+/g, " ").trim();
+        ctx.fillStyle = isActive ? "#e0e7ff" : "#cbd5e1";
+        ctx.font = '11px "Inter", "PingFang SC", sans-serif';
+        ctx.fillText(label, x1 + 6, topY + 22);
+        ctx.restore();
+      }
+    }
+
+    // 5. Playhead Needle
+    const curMs = getCurrentPlayheadMs();
+    if (curMs >= winStart && curMs <= winEnd) {
+      const px = ((curMs - winStart) / spanMs) * width;
+      ctx.strokeStyle = "#22d3ee";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, height);
+      ctx.stroke();
+
+      ctx.fillStyle = "#22d3ee";
+      ctx.beginPath();
+      ctx.moveTo(px - 5, 0);
+      ctx.lineTo(px + 5, 0);
+      ctx.lineTo(px, 7);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  function hitTestWaveform(canvas, clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const width = Math.max(1, rect.width);
+    const { winStart, spanMs } = getWaveformWindow();
+    const timeMs = Math.max(0, winStart + (x / width) * spanMs);
+
+    if (y >= 20 && state.doc) {
+      const cues = state.doc.cues || [];
+      for (let i = cues.length - 1; i >= 0; i--) {
+        const cue = cues[i];
+        if (cue.is_special) continue;
+        const x1 = ((cue.start_ms - winStart) / spanMs) * width;
+        const x2 = Math.max(x1 + 8, ((cue.end_ms - winStart) / spanMs) * width);
+        if (x >= x1 - 5 && x <= x2 + 5) {
+          if (Math.abs(x - x1) <= 6) return { mode: "trim-start", cue, timeMs, x, width, winStart, spanMs };
+          if (Math.abs(x - x2) <= 6) return { mode: "trim-end", cue, timeMs, x, width, winStart, spanMs };
+          return { mode: "move", cue, timeMs, x, width, winStart, spanMs };
+        }
+      }
+    }
+    return { mode: "seek", cue: null, timeMs, x, width, winStart, spanMs };
+  }
+
+  function bindWaveformEvents() {
+    const canvas = $("waveform-canvas");
+    if (!canvas) return;
+
+    window.addEventListener("resize", () => drawWaveformTimeline());
+
+    canvas.addEventListener("mousemove", (e) => {
+      if (state.wfDrag || !state.doc) return;
+      const hit = hitTestWaveform(canvas, e.clientX, e.clientY);
+      if (hit.mode === "trim-start" || hit.mode === "trim-end") {
+        canvas.style.cursor = "ew-resize";
+      } else if (hit.mode === "move") {
+        canvas.style.cursor = "grab";
+      } else {
+        canvas.style.cursor = "pointer";
+      }
+    });
+
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.button !== 0 || !state.doc) return;
+      const hit = hitTestWaveform(canvas, e.clientX, e.clientY);
+      if (hit.mode === "seek") {
+        state.wfDrag = { mode: "seek", winStart: hit.winStart, spanMs: hit.spanMs, width: hit.width };
+        seekStudioToMs(hit.timeMs);
+        return;
+      }
+
+      const cue = hit.cue;
+      activateCue(cue.id, false);
+      canvas.style.cursor = hit.mode === "move" ? "grabbing" : "ew-resize";
+      state.wfDrag = {
+        mode: hit.mode,
+        cue,
+        origStart: cue.start_ms,
+        origEnd: cue.end_ms,
+        startClientX: e.clientX,
+        winStart: hit.winStart,
+        spanMs: hit.spanMs,
+        width: hit.width,
+        moved: false,
+        preSnap: captureDocSnapshotString(),
+      };
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      const drag = state.wfDrag;
+      if (!drag) return;
+
+      if (drag.mode === "seek") {
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const tMs = drag.winStart + (x / Math.max(1, rect.width)) * drag.spanMs;
+        seekStudioToMs(tMs);
+        return;
+      }
+
+      const dx = e.clientX - drag.startClientX;
+      if (Math.abs(dx) > 2) drag.moved = true;
+      const deltaMs = Math.round((dx / drag.width) * drag.spanMs);
+      const cue = drag.cue;
+
+      if (drag.mode === "move") {
+        const dur = drag.origEnd - drag.origStart;
+        const nextStart = Math.max(0, drag.origStart + deltaMs);
+        cue.start_ms = nextStart;
+        cue.end_ms = nextStart + dur;
+      } else if (drag.mode === "trim-start") {
+        cue.start_ms = Math.max(0, Math.min(drag.origEnd - 300, drag.origStart + deltaMs));
+      } else if (drag.mode === "trim-end") {
+        cue.end_ms = Math.max(drag.origStart + 300, drag.origEnd + deltaMs);
+      }
+
+      const rowEl = document.querySelector(`.cue-row[data-cue-id="${cue.id}"]`);
+      if (rowEl) {
+        const sInp = rowEl.querySelector('[data-time-field="start_ms"]');
+        const eInp = rowEl.querySelector('[data-time-field="end_ms"]');
+        if (sInp) sInp.value = msToDisplay(cue.start_ms);
+        if (eInp) eInp.value = msToDisplay(cue.end_ms);
+      }
+      $("player-timecode").textContent = msToDisplay(cue.start_ms);
+      drawWaveformTimeline();
+    });
+
+    window.addEventListener("mouseup", () => {
+      const drag = state.wfDrag;
+      if (!drag) return;
+      state.wfDrag = null;
+      canvas.style.cursor = "pointer";
+
+      if (drag.mode === "seek") return;
+
+      if (drag.moved) {
+        pushRawUndoSnapshot(drag.preSnap);
+        renderCueList(true);
+        updateCounts();
+        scheduleAutoSave();
+      } else if (drag.cue) {
+        activateCue(drag.cue.id, true);
+        const rowEl = document.querySelector(`.cue-row[data-cue-id="${drag.cue.id}"]`);
+        if (rowEl) rowEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    });
+  }
+
+  // Multi-File Batch Subtitle Queue & One-Click ZIP Export
+  async function enqueueBatchSubtitleFiles(files) {
+    let added = 0;
+    for (const file of files) {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("encoding", "auto");
+      try {
+        const resp = await fetch("/api/subtitles/parse", { method: "POST", body: form });
+        const doc = await resp.json();
+        if (!resp.ok) throw new Error(doc.detail || "解析失败");
+        state.batchQueue.push({
+          queueId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          doc,
+          status: "pending",
+          progressPct: 0,
+          errorMsg: "",
+        });
+        added++;
+      } catch (err) {
+        toast(`${file.name} 解析失败：${err.message}`, "error");
+      }
+    }
+    renderBatchQueue();
+    if (added > 0) {
+      toast(`已向批量队列添加 ${added} 份字幕文件`, "success");
+    }
+  }
+
+  function renderBatchQueue() {
+    const listEl = $("batch-queue-list");
+    const summaryEl = $("batch-summary-text");
+    if (!listEl || !summaryEl) return;
+
+    const total = state.batchQueue.length;
+    const doneCount = state.batchQueue.filter((it) => it.status === "done").length;
+    summaryEl.textContent = `队列共 ${total} 个文件 · 已完成 ${doneCount}/${total}`;
+
+    $("btn-start-batch").disabled = total === 0 || state.batchRunning;
+    $("btn-export-batch-zip").disabled = total === 0 || state.batchRunning;
+    $("btn-batch-clear").disabled = total === 0 || state.batchRunning;
+    $("btn-stop-batch").hidden = !state.batchRunning;
+
+    if (!total) {
+      listEl.innerHTML = `<div class="empty-mini">点击上方「📂 选择多份字幕」或直接将多集字幕文件拖入窗口，即可开始队列精翻或批量转格式导出。</div>`;
+      return;
+    }
+
+    listEl.innerHTML = "";
+    state.batchQueue.forEach((item, idx) => {
+      const dialogueCount = item.doc.cues.filter((c) => !c.is_special).length;
+      const translatedCount = item.doc.cues.filter((c) => !c.is_special && (c.target_text || "").trim()).length;
+      let badgeCls = "";
+      let badgeTxt = `待翻译 (${translatedCount}/${dialogueCount})`;
+      if (item.status === "translating") {
+        badgeCls = "running";
+        badgeTxt = `⏳ 精翻中 ${item.progressPct}%`;
+      } else if (item.status === "done") {
+        badgeCls = "done";
+        badgeTxt = `✅ 已完成 (${translatedCount}/${dialogueCount})`;
+      } else if (item.status === "error") {
+        badgeCls = "err";
+        badgeTxt = `❌ ${item.errorMsg || "失败"}`;
+      }
+
+      const row = document.createElement("div");
+      row.className = "batch-item";
+      row.innerHTML = `
+        <div class="batch-item-info">
+          <div class="batch-item-head">
+            <span class="batch-item-name" title="${escapeHtml(item.doc.filename)}">${idx + 1}. ${escapeHtml(item.doc.filename)}</span>
+            <span class="doc-tag">${escapeHtml((item.doc.source_format || "srt").toUpperCase())}</span>
+            <span class="batch-status-tag ${badgeCls}">${escapeHtml(badgeTxt)}</span>
+          </div>
+          <div class="batch-progress-bar">
+            <div class="batch-progress-fill" style="width: ${item.progressPct || 0}%"></div>
+          </div>
+        </div>
+        <div class="batch-item-actions">
+          <button class="btn btn-subtle btn-sm" data-batch-open="${idx}" type="button" ${state.batchRunning ? "disabled" : ""}>精修预览</button>
+          <button class="btn btn-icon btn-sm" data-batch-del="${idx}" type="button" title="从队列移除" ${state.batchRunning ? "disabled" : ""}>✕</button>
+        </div>
+      `;
+      listEl.appendChild(row);
+    });
+
+    listEl.querySelectorAll("[data-batch-open]").forEach((btn) => {
+      btn.onclick = () => {
+        const item = state.batchQueue[Number(btn.dataset.batchOpen)];
+        if (!item) return;
+        loadDocumentIntoStudio(item.doc, true);
+        closeModal("modal-batch");
+        toast(`已在编辑台打开：${item.doc.filename}`, "info");
+      };
+    });
+
+    listEl.querySelectorAll("[data-batch-del]").forEach((btn) => {
+      btn.onclick = () => {
+        if (state.batchRunning) return;
+        state.batchQueue.splice(Number(btn.dataset.batchDel), 1);
+        renderBatchQueue();
+      };
+    });
+  }
+
+  async function runBatchQueueTranslation() {
+    if (state.batchRunning || !state.batchQueue.length) return;
+    syncDocContextFields();
+
+    const sharedGlossary = state.doc?.glossary || [];
+    const sharedPrompt = state.doc?.custom_prompt || $("custom-prompt-input").value.trim();
+    const sharedSummary = state.doc?.scene_summary || $("scene-summary-input").value.trim();
+    const srcLang = $("select-source-lang").value || "auto";
+    const tgtLang = $("select-target-lang").value || "zh";
+    const mode = $("select-trans-mode").value || "reflective";
+    const genre = $("select-genre").value || "general";
+
+    const pendingItems = state.batchQueue.filter((it) => it.status !== "done");
+    const targets = pendingItems.length ? pendingItems : state.batchQueue;
+
+    state.batchRunning = true;
+    state.batchAbort = new AbortController();
+    renderBatchQueue();
+
+    let finishedFiles = 0;
+    try {
+      for (const item of targets) {
+        item.status = "translating";
+        item.progressPct = 3;
+        item.errorMsg = "";
+        item.doc.source_language = srcLang === "auto" ? item.doc.source_language || "auto" : srcLang;
+        item.doc.target_language = tgtLang;
+        item.doc.genre = genre;
+        if (sharedGlossary.length && (!item.doc.glossary || !item.doc.glossary.length)) {
+          item.doc.glossary = JSON.parse(JSON.stringify(sharedGlossary));
+        }
+        renderBatchQueue();
+
+        const resp = await fetch("/api/ai/translate-stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: state.batchAbort.signal,
+          body: JSON.stringify({
+            cues: item.doc.cues,
+            source_language: item.doc.source_language,
+            target_language: tgtLang,
+            mode,
+            genre,
+            scene_summary: item.doc.scene_summary || sharedSummary,
+            custom_prompt: item.doc.custom_prompt || sharedPrompt,
+            glossary: item.doc.glossary || sharedGlossary,
+          }),
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json();
+          throw new Error(err.detail || "请求失败");
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buf = "";
+        const cueMap = new Map(item.doc.cues.map((c) => [c.id, c]));
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const chunks = buf.split("\n\n");
+          buf = chunks.pop() || "";
+
+          for (const raw of chunks) {
+            const line = raw.trim();
+            if (!line.startsWith("data:")) continue;
+            const evt = JSON.parse(line.slice(5).trim());
+            if (evt.event === "batch_done") {
+              for (const upd of evt.updates || []) {
+                const c = cueMap.get(upd.id);
+                if (c && upd.target_text) {
+                  c.target_text = upd.target_text;
+                  c.status = upd.status;
+                }
+              }
+              item.progressPct = evt.percent || item.progressPct;
+              renderBatchQueue();
+            } else if (evt.event === "error") {
+              throw new Error(evt.message || "翻译中断");
+            }
+          }
+        }
+
+        item.status = "done";
+        item.progressPct = 100;
+        finishedFiles++;
+        renderBatchQueue();
+
+        // Persist each completed episode in project archive
+        try {
+          await fetch("/api/projects/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(item.doc),
+          });
+        } catch (_) {}
+
+        if (state.doc && state.doc.doc_id === item.doc.doc_id) {
+          state.doc.cues = JSON.parse(JSON.stringify(item.doc.cues));
+          renderAll(true);
+        }
+      }
+      toast(`🎉 批量队列精翻完成（共完成 ${finishedFiles} 份字幕），可一键打包导出 ZIP！`, "success");
+    } catch (err) {
+      if (err.name === "AbortError") {
+        state.batchQueue.forEach((it) => {
+          if (it.status === "translating") it.status = "pending";
+        });
+        toast("已停止批量队列，已完成集数的译文已保留。", "info");
+      } else {
+        const runningItem = state.batchQueue.find((it) => it.status === "translating");
+        if (runningItem) {
+          runningItem.status = "error";
+          runningItem.errorMsg = err.message || "翻译失败";
+        }
+        toast(err.message || "批量队列发生错误", "error");
+        if ((err.message || "").includes("API Key")) {
+          closeModal("modal-batch");
+          openModal("modal-settings");
+        }
+      }
+    } finally {
+      state.batchRunning = false;
+      state.batchAbort = null;
+      renderBatchQueue();
+    }
+  }
+
+  async function exportBatchQueueZip() {
+    if (!state.batchQueue.length) return;
+    const formats = Array.from(document.querySelectorAll("#batch-format-checks input:checked")).map(
+      (el) => el.value
+    );
+    if (!formats.length) {
+      toast("请至少勾选一种打包导出格式。", "error");
+      return;
+    }
+    const trackMode = $("batch-track-mode").value || "bilingual_tgt_top";
+
+    try {
+      const resp = await fetch("/api/subtitles/export-batch-zip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          documents: state.batchQueue.map((it) => it.doc),
+          formats,
+          track_mode: trackMode,
+          ass_secondary_scale: 72,
+          ass_style_preset: "cinema_outline",
+          fallback_to_source: true,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "ZIP 打包失败");
+
+      if (state.meta?.runtime !== "desktop" && data.download_url) {
+        const a = document.createElement("a");
+        a.href = data.download_url;
+        a.download = data.zip_filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 300);
+      }
+
+      const box = $("batch-export-result");
+      box.hidden = false;
+      const canOpenDir = state.meta?.runtime && state.meta.runtime !== "docker";
+      box.innerHTML = `
+        <div>✅ 已打包生成 <strong>${escapeHtml(data.zip_filename)}</strong>（共包含 ${data.file_count} 个字幕文件）</div>
+        <div style="margin-top:4px;"><small>保存路径：<code>${escapeHtml(data.saved_path)}</code></small></div>
+        <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+          <a class="btn btn-subtle btn-sm" href="${escapeHtml(data.download_url)}" download="${escapeHtml(data.zip_filename)}" style="text-decoration:none;">⬇️ 下载 ZIP 压缩包</a>
+          ${canOpenDir ? `<button class="btn btn-subtle btn-sm" id="btn-batch-reveal-dir" type="button">📂 打开导出文件夹</button>` : ""}
+        </div>
+      `;
+      const revBtn = $("btn-batch-reveal-dir");
+      if (revBtn) {
+        revBtn.onclick = async () => {
+          try {
+            await fetch("/api/desktop/open-exports", { method: "POST" });
+          } catch (_) {}
+        };
+      }
+      toast(`成功打包 ${data.file_count} 份字幕至 ${data.zip_filename}`, "success");
+    } catch (err) {
+      toast(err.message, "error");
+    }
   }
 
   async function applyTimeShift(offsetMs) {

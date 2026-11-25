@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>听见 Studio 2.3 · AI 双语字幕精修与语音识别工作台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2.3.0" />
+  <title>听见 Studio 2.4 · AI 双语字幕精修与语音识别工作台</title>
+  <link rel="stylesheet" href="/static/styles.css?v=2.4.0" />
 </head>
 <body>
   <div id="app" class="studio-shell">
@@ -20,7 +20,7 @@
           </div>
           <div class="brand-text">
             <span class="brand-title">听见 Studio</span>
-            <span class="brand-badge">v2.3</span>
+            <span class="brand-badge">v2.4</span>
           </div>
         </div>
 
@@ -37,6 +37,10 @@
           <span>🎙️ 音视频转字幕</span>
         </button>
 
+        <button class="btn btn-subtle" id="btn-open-batch" type="button" title="多集字幕批量队列精翻与一键打包导出 ZIP">
+          <span>📚 批量队列</span>
+        </button>
+
         <button class="btn btn-subtle" id="btn-open-projects" type="button" title="查看与恢复自动保存的历史字幕工程">
           <span>🗂 历史工程</span>
         </button>
@@ -50,7 +54,7 @@
           <div class="dropdown-menu" id="sample-menu" hidden></div>
         </div>
 
-        <label class="btn btn-subtle" for="media-file-input" title="挂载本地视频或音频（零上传延迟，浏览器本地直读同步预览）">
+        <label class="btn btn-subtle" for="media-file-input" title="挂载本地视频或音频（零上传延迟，浏览器本地直读同步预览并生成声波）">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><polygon points="10 7 15 10 10 13 10 7"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
           <span>挂载音视频</span>
         </label>
@@ -60,6 +64,7 @@
           <span class="doc-name" id="doc-filename">untitled.srt</span>
           <span class="doc-tag" id="doc-format-badge">SRT</span>
           <span class="doc-save-state" id="doc-save-state">已就绪</span>
+          <button class="doc-close-btn" id="btn-close-doc" type="button" title="关闭当前文档返回欢迎页">✕</button>
         </div>
       </div>
 
@@ -134,6 +139,9 @@
       </div>
 
       <div class="toolbar-group toolbar-right">
+        <button class="btn btn-subtle btn-sm" id="btn-toggle-waveform" type="button" disabled title="展开或收起底部交互式音频波形与可视化打轴条">
+          <span>🌊 波形时间轴</span>
+        </button>
         <button class="btn btn-subtle btn-sm" id="btn-open-qa" type="button" disabled title="字幕质量体检与时间轴重叠/标点一键修复">
           <span>🩺 字幕体检</span>
         </button>
@@ -145,6 +153,9 @@
         </button>
         <button class="btn btn-subtle btn-sm" id="btn-toggle-search" type="button" disabled title="全文查找与批量替换 (Cmd/Ctrl+F)">
           <span>🔍 查找替换</span>
+        </button>
+        <button class="btn btn-subtle btn-sm" id="btn-clear-translations" type="button" disabled title="一键清空当前文档所有译文（支持 Cmd/Ctrl+Z 撤销恢复）">
+          <span>🧹 清空译文</span>
         </button>
 
         <div class="filter-pills" id="filter-pills">
@@ -287,9 +298,9 @@
                 <rect x="3" y="18" width="18" height="3" rx="1.5"/>
               </svg>
             </div>
-            <h1>欢迎使用 听见 Studio 2.3</h1>
+            <h1>欢迎使用 听见 Studio 2.4</h1>
             <p class="welcome-sub">
-              集 <strong>音视频 AI 转写 + 滑动窗口反思精翻 + 双语时间轴精修 + 影院级 ASS 无损导出</strong> 于一体的全流程字幕工作台。
+              集 <strong>音视频 AI 转写 + 静音感知动态分批精翻 + 交互波形打轴 + 多集批量导出</strong> 于一体的全流程字幕工作台。
             </p>
 
             <div class="welcome-actions">
@@ -300,8 +311,11 @@
                 <button class="btn btn-subtle btn-lg" id="btn-welcome-asr" type="button">
                   🎙️ 音视频提取生成字幕
                 </button>
+                <button class="btn btn-subtle btn-lg" id="btn-welcome-batch" type="button">
+                  📚 多集批量翻译
+                </button>
               </div>
-              <span class="welcome-or">或者直接将字幕 / 视频 / 音频文件拖入窗口任意位置</span>
+              <span class="welcome-or">或者直接将单份或多份字幕 / 视频 / 音频文件拖入窗口任意位置</span>
             </div>
 
             <div class="sample-cards-wrap">
@@ -323,6 +337,27 @@
             <div class="col-actions">操作</div>
           </div>
           <div class="cue-list" id="cue-list"></div>
+        </div>
+
+        <!-- Interactive Audio Waveform & Draggable Cue Timeline Strip -->
+        <div class="timeline-dock" id="timeline-dock" hidden>
+          <div class="timeline-dock-header">
+            <div class="timeline-dock-left">
+              <span class="timeline-title">🌊 音频波形与可视化打轴条</span>
+              <span class="timeline-hint" id="waveform-status">拖拽色块平移时间 · 拖左右边缘修剪起止点 · 点击空白定位跳转</span>
+            </div>
+            <div class="timeline-dock-right">
+              <div class="zoom-pills" id="waveform-zoom-group" title="时间轴视窗缩放比例">
+                <button class="tiny-pill active" data-wf-zoom="1" type="button">1x (20s)</button>
+                <button class="tiny-pill" data-wf-zoom="2" type="button">2x (10s)</button>
+                <button class="tiny-pill" data-wf-zoom="4" type="button">4x (5s)</button>
+              </div>
+              <button class="btn btn-icon btn-sm" id="btn-close-waveform" type="button" title="收起波形时间轴">✕</button>
+            </div>
+          </div>
+          <div class="waveform-canvas-wrap">
+            <canvas id="waveform-canvas" height="74"></canvas>
+          </div>
         </div>
       </section>
     </main>
@@ -666,10 +701,71 @@
       </div>
     </div>
 
+    <!-- Modal: Multi-File Batch Subtitle Queue & ZIP Export -->
+    <div class="modal-backdrop" id="modal-batch" hidden>
+      <div class="modal-card modal-card-wide">
+        <div class="modal-header">
+          <div>
+            <h2>📚 多集字幕批量队列精翻与一键打包</h2>
+            <p class="modal-sub">一次导入多集剧集/课程字幕，自动复用当前语言对、题材与已启用的术语表顺序精翻，支持一键导出 ZIP 压缩包</p>
+          </div>
+          <button class="btn btn-icon" data-close-modal="modal-batch" type="button">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="batch-toolbar">
+            <div class="batch-toolbar-left">
+              <label class="btn btn-subtle" for="batch-files-input">📂 选择多份字幕 (.srt / .ass / .vtt)</label>
+              <input id="batch-files-input" type="file" accept=".srt,.ass,.ssa,.vtt" multiple hidden />
+              <button class="btn btn-subtle btn-sm" id="btn-batch-add-current" type="button">➕ 加入当前打开的字幕</button>
+              <button class="btn btn-subtle btn-sm" id="btn-batch-clear" type="button">🗑 清空队列</button>
+            </div>
+            <span class="utility-hint" id="batch-summary-text">队列共 0 个文件</span>
+          </div>
+
+          <div class="form-row-2">
+            <div class="field-group">
+              <label class="field-label" for="batch-track-mode">批量导出字幕排版模式</label>
+              <select id="batch-track-mode" class="input-full">
+                <option value="bilingual_tgt_top">双语 · 译文在上 / 原文在下（推荐）</option>
+                <option value="bilingual_src_top">双语 · 原文在上 / 译文在下</option>
+                <option value="target_only">纯译文字幕</option>
+                <option value="source_only">纯原文字幕（批量跨格式转换）</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label">批量打包目标格式（可多选）</label>
+              <div class="format-checks" id="batch-format-checks">
+                <label class="fmt-check"><input type="checkbox" value="srt" checked /> <span><strong>SRT</strong></span></label>
+                <label class="fmt-check"><input type="checkbox" value="ass" /> <span><strong>ASS</strong></span></label>
+                <label class="fmt-check"><input type="checkbox" value="vtt" /> <span><strong>VTT</strong></span></label>
+                <label class="fmt-check"><input type="checkbox" value="txt" /> <span><strong>TXT</strong></span></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="batch-queue-list" id="batch-queue-list">
+            <div class="empty-mini">点击上方「📂 选择多份字幕」或直接将多集字幕文件拖入窗口，即可开始队列精翻或批量转格式导出。</div>
+          </div>
+
+          <div class="export-result-box" id="batch-export-result" hidden></div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-subtle" id="btn-export-batch-zip" type="button" disabled>📦 一键打包导出 (.zip)</button>
+          <div class="footer-right">
+            <button class="btn btn-danger" id="btn-stop-batch" type="button" hidden>⏹ 停止队列</button>
+            <button class="btn btn-subtle" data-close-modal="modal-batch" type="button">关闭</button>
+            <button class="btn btn-primary" id="btn-start-batch" type="button" disabled>🚀 开始队列批量精翻</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast Container -->
     <div class="toast-stack" id="toast-stack"></div>
   </div>
 
-  <script src="/static/app.js?v=2.3.0" defer></script>
+  <script src="/static/app.js?v=2.4.0" defer></script>
 </body>
 </html>

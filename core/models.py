@@ -181,3 +181,12 @@ class QAFixRequest(BaseModel):
     fix_overlaps: bool = True
     clean_punctuation: bool = True
     target_language: str = "zh"
+
+
+class BatchZipExportRequest(BaseModel):
+    documents: List[SubtitleDocument]
+    formats: List[SubtitleFormat] = Field(default_factory=lambda: ["srt"])
+    track_mode: ExportTrackMode = "bilingual_tgt_top"
+    ass_secondary_scale: int = Field(default=72, ge=40, le=100)
+    ass_style_preset: AssStylePresetId = "cinema_outline"
+    fallback_to_source: bool = True

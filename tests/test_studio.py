@@ -1,17 +1,19 @@
 """Comprehensive automated unit & functional integration tests for ListenTo Studio v2.0."""
 
+import io
 import json
 import os
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi.testclient import TestClient
 
 from core import config_store
-from core.models import APISettingsUpdate
+from core.models import APISettingsUpdate, SubtitleCue
 from core.parser import (
     decode_subtitle_bytes,
     export_document_format,
@@ -19,7 +21,7 @@ from core.parser import (
     shift_cues_timestamps,
     split_bilingual_cues,
 )
-from core.translator import _is_local_url, extract_json_payload
+from core.translator import _is_local_url, extract_json_payload, partition_scene_batches
 from server import app
 
 
@@ -508,6 +510,102 @@ class StudioTestSuite(unittest.TestCase):
             )
             self.assertEqual(ex_resp.status_code, 200)
             self.assertEqual(len(ex_resp.json()["files"]), 5)
+
+    def test_sloppy_srt_parsing_missing_blank_lines_and_short_ms(self):
+        sloppy_srt = (
+            "1\n"
+            "00:00:01,5 --> 00:00:03.25\n"
+            "First line with 1-digit and 2-digit ms\n"
+            "2\n"
+            "00:00:03,400 --> 00:00:05,8\n"
+            "Second cue immediately without blank line!\n"
+        )
+        doc = parse_subtitle_content(sloppy_srt, "sloppy.srt", "utf-8")
+        self.assertEqual(len(doc.cues), 2)
+        self.assertEqual(doc.cues[0].start_ms, 1500)
+        self.assertEqual(doc.cues[0].end_ms, 3250)
+        self.assertEqual(doc.cues[1].start_ms, 3400)
+        self.assertEqual(doc.cues[1].end_ms, 5800)
+
+    def test_scene_aware_silence_and_punctuation_batching(self):
+        # Cue #4 ends mid-clause with comma & tiny 50ms gap; Cue #5 ends sentence with period & 2.2s silence gap.
+        cues = [
+            SubtitleCue(id=1, start_ms=0, end_ms=1500, source_text="Welcome back everyone."),
+            SubtitleCue(id=2, start_ms=1600, end_ms=3000, source_text="Today we test scene batching."),
+            SubtitleCue(id=3, start_ms=3100, end_ms=4500, source_text="When dialogue runs fast,"),
+            SubtitleCue(id=4, start_ms=4550, end_ms=5900, source_text="splitting right in a comma,"),
+            SubtitleCue(id=5, start_ms=5950, end_ms=7400, source_text="would break context badly."),
+            SubtitleCue(id=6, start_ms=9600, end_ms=11200, source_text="After a two second pause, a new scene begins!"),
+            SubtitleCue(id=7, start_ms=11400, end_ms=13000, source_text="And continues smoothly here."),
+            SubtitleCue(id=8, start_ms=13200, end_ms=14800, source_text="Final line of scene two."),
+        ]
+        batches = partition_scene_batches(cues, target_size=4)
+        self.assertEqual(len(batches), 2)
+        # First batch should cut cleanly after cue #5 (silence gap 2200ms + period) instead of cue #4
+        self.assertEqual([c.id for c in batches[0]], [1, 2, 3, 4, 5])
+        self.assertEqual([c.id for c in batches[1]], [6, 7, 8])
+
+    def test_api_exponential_retry_on_429_and_503(self):
+        orig_async_client = httpx.AsyncClient
+        attempts = {"count": 0}
+
+        def flaky_handler(request: httpx.Request) -> httpx.Response:
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                return httpx.Response(429, json={"error": "rate limit"})
+            if attempts["count"] == 2:
+                return httpx.Response(503, json={"error": "bad gateway"})
+            return _mock_openai_handler(request)
+
+        def mocked_flaky_client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(flaky_handler)
+            return orig_async_client(*args, **kwargs)
+
+        override = {
+            "provider_id": "custom",
+            "base_url": "http://localhost:11434/v1",
+            "model": "mock-gpt",
+        }
+        with patch("core.translator.httpx.AsyncClient", side_effect=mocked_flaky_client), patch(
+            "core.translator.asyncio.sleep", new=AsyncMock()
+        ):
+            resp = self.client.post("/api/settings/test", json=override)
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.json()["ok"])
+            self.assertEqual(attempts["count"], 3)
+
+    def test_batch_zip_export_and_safe_download(self):
+        ep1 = self.client.get("/api/samples/tech_keynote").json()
+        ep1["filename"] = "Episode_01.srt"
+        ep1["cues"][0]["target_text"] = "第一集首句双语译文"
+
+        ep2 = self.client.get("/api/samples/tech_keynote").json()
+        ep2["filename"] = "Episode_02.srt"
+        ep2["cues"][0]["target_text"] = "第二集首句双语译文"
+
+        z_resp = self.client.post(
+            "/api/subtitles/export-batch-zip",
+            json={
+                "documents": [ep1, ep2],
+                "formats": ["srt", "vtt"],
+                "track_mode": "bilingual_tgt_top",
+            },
+        )
+        self.assertEqual(z_resp.status_code, 200)
+        z_data = z_resp.json()
+        self.assertEqual(z_data["file_count"], 4)
+
+        dl_resp = self.client.get(z_data["download_url"])
+        self.assertEqual(dl_resp.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(dl_resp.content), "r") as zf:
+            names = sorted(zf.namelist())
+            self.assertEqual(len(names), 4)
+            ep1_srt = zf.read("Episode_01.en-zh.srt").decode("utf-8")
+            self.assertIn("第一集首句双语译文", ep1_srt)
+
+        # Path traversal attempt must fail
+        bad_resp = self.client.get("/api/subtitles/download-export/..%2Fsettings.json")
+        self.assertIn(bad_resp.status_code, (400, 404))
 
 
 if __name__ == "__main__":

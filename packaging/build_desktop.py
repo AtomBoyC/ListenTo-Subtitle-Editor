@@ -122,7 +122,7 @@ def main() -> int:
                 "hdiutil",
                 "create",
                 "-volname",
-                "ListenTo Studio 2.0",
+                "ListenTo Studio 2.4",
                 "-srcfolder",
                 str(dmg_staging),
                 "-ov",

@@ -1,10 +1,13 @@
 """FastAPI Backend Server for ListenTo Studio v2.0 (听见 · AI 字幕精修工作台)."""
 
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+import time
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -28,6 +31,7 @@ from core.config_store import (
 from core.asr import get_asr_presets, transcribe_media_to_document
 from core.models import (
     APISettingsUpdate,
+    BatchZipExportRequest,
     ExportRequest,
     GlossaryExtractRequest,
     QAFixRequest,
@@ -105,7 +109,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
-    return {"status": "ok", "version": "2.3.0"}
+    return {"status": "ok", "version": "2.4.0"}
 
 
 @app.get("/api/meta")
@@ -114,7 +118,7 @@ async def get_meta() -> Dict[str, Any]:
     runtime = "docker" if _IN_DOCKER else ("desktop" if IS_DESKTOP else "local")
     return {
         "runtime": runtime,
-        "version": "2.3.0",
+        "version": "2.4.0",
         "exports_dir": str(EXPORTS_DIR),
         "presets": [p.model_dump() for p in PROVIDER_PRESETS],
         "asr_presets": [p.model_dump() for p in get_asr_presets(_IN_DOCKER)],
@@ -414,6 +418,74 @@ async def api_preview_export(payload: ExportRequest) -> Dict[str, Any]:
         return {"format": fmt, "preview": preview}
     except SubtitleParseError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/subtitles/export-batch-zip")
+async def api_export_batch_zip(payload: BatchZipExportRequest) -> Dict[str, Any]:
+    if not payload.documents:
+        raise HTTPException(status_code=400, detail="没有可打包导出的字幕文档。")
+
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    zip_filename = f"ListenTo_Batch_{ts}.zip"
+    zip_path = EXPORTS_DIR / zip_filename
+
+    buf = io.BytesIO()
+    used_names: Dict[str, int] = {}
+    file_count = 0
+
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for doc in payload.documents:
+                stem = Path(doc.filename).stem
+                stem = re.sub(r"\.(?:[a-z]{2}(?:-[a-z]{2})?|converted)$", "", stem, flags=re.IGNORECASE)
+                lang_tag = doc.target_language
+                if payload.track_mode in ("bilingual_tgt_top", "bilingual_src_top"):
+                    lang_tag = f"{doc.source_language}-{doc.target_language}"
+                elif payload.track_mode == "source_only":
+                    lang_tag = doc.source_language
+
+                for fmt in dict.fromkeys(payload.formats):
+                    rendered = export_document_format(
+                        doc,
+                        target_format=fmt,
+                        track_mode=payload.track_mode,
+                        ass_secondary_scale=payload.ass_secondary_scale,
+                        fallback_to_source=payload.fallback_to_source,
+                        ass_style_preset=payload.ass_style_preset,
+                    )
+                    base_name = f"{stem}.{lang_tag}.{fmt}"
+                    if base_name in used_names:
+                        used_names[base_name] += 1
+                        base_name = f"{stem}.{used_names[base_name]}.{lang_tag}.{fmt}"
+                    else:
+                        used_names[base_name] = 1
+                    zf.writestr(base_name, rendered.encode("utf-8"))
+                    file_count += 1
+    except SubtitleParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    zip_bytes = buf.getvalue()
+    zip_path.write_bytes(zip_bytes)
+
+    return {
+        "zip_filename": zip_filename,
+        "saved_path": str(zip_path),
+        "exports_dir": str(EXPORTS_DIR),
+        "file_count": file_count,
+        "download_url": f"/api/subtitles/download-export/{zip_filename}",
+    }
+
+
+@app.get("/api/subtitles/download-export/{filename}")
+async def download_exported_file(filename: str) -> FileResponse:
+    safe_name = Path(filename).name
+    if safe_name != filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="非法文件名。")
+    target = (EXPORTS_DIR / safe_name).resolve()
+    if not target.is_file() or target.parent != EXPORTS_DIR.resolve():
+        raise HTTPException(status_code=404, detail="导出文件不存在。")
+    return FileResponse(target, filename=safe_name, media_type="application/octet-stream")
 
 
 @app.post("/api/projects/save")

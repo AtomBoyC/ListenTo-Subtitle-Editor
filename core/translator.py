@@ -251,20 +251,38 @@ async def _call_chat_completion(
     if supports_json_mode and "anthropic.com" not in endpoint.lower():
         payload["response_format"] = {"type": "json_object"}
 
+    resp: Optional[httpx.Response] = None
+    last_exc: Optional[Exception] = None
+    max_attempts = 3
+
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(settings.timeout, connect=15.0),
         trust_env=not is_local,
         follow_redirects=True,
     ) as client:
-        try:
-            resp = await client.post(endpoint, headers=headers, json=payload)
-            if resp.status_code in (400, 422) and "response_format" in payload:
-                payload.pop("response_format", None)
+        for attempt in range(1, max_attempts + 1):
+            try:
                 resp = await client.post(endpoint, headers=headers, json=payload)
-        except httpx.TimeoutException as exc:
-            raise LLMTranslationError("请求大模型超时，请检查网络连接或适当调小单批条数。") from exc
-        except httpx.RequestError as exc:
-            raise LLMTranslationError(f"无法连接 API 服务（{endpoint}）：{exc}") from exc
+                if resp.status_code in (400, 422) and "response_format" in payload:
+                    payload.pop("response_format", None)
+                    resp = await client.post(endpoint, headers=headers, json=payload)
+
+                if resp.status_code in (429, 500, 502, 503, 504) and attempt < max_attempts:
+                    await asyncio.sleep(1.2 * (2 ** (attempt - 1)))
+                    continue
+                break
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_exc = exc
+                if attempt < max_attempts:
+                    await asyncio.sleep(1.2 * (2 ** (attempt - 1)))
+                    continue
+                if isinstance(exc, httpx.TimeoutException):
+                    raise LLMTranslationError("请求大模型多次超时，请检查网络连接或适当调小单批条数。") from exc
+                raise LLMTranslationError(f"无法连接 API 服务（{endpoint}）：{exc}") from exc
+            except httpx.RequestError as exc:
+                raise LLMTranslationError(f"无法连接 API 服务（{endpoint}）：{exc}") from exc
+
+    assert resp is not None
 
     if resp.status_code in (401, 403):
         raise LLMTranslationError("API Key 验证失败或无权限（HTTP 401/403），请检查密钥与账户余额。")
@@ -401,12 +419,74 @@ async def extract_glossary_and_summary(
     }
 
 
+_SENTENCE_END_CHARS = (".", "!", "?", "。", "！", "？", "…", "\"", "”", "'", "」", "』", ")")
+
+
+def partition_scene_batches(cues: List[SubtitleCue], target_size: int = 12) -> List[List[SubtitleCue]]:
+    """Split subtitle cues into batches at natural silence gaps (>=1.2s) and sentence endings."""
+    n = len(cues)
+    if n == 0:
+        return []
+    target_size = max(1, min(30, target_size))
+    if target_size <= 2 or n <= target_size:
+        return [cues[i : i + target_size] for i in range(0, n, target_size)]
+
+    min_step = max(3, int(round(target_size * 0.65)))
+    max_step = max(target_size + 1, int(round(target_size * 1.35)))
+
+    batches: List[List[SubtitleCue]] = []
+    idx = 0
+    while idx < n:
+        remaining = n - idx
+        if remaining <= max_step:
+            batches.append(cues[idx:])
+            break
+
+        best_cut = idx + target_size
+        best_score = -1e9
+        low = idx + min_step
+        high = min(n - 1, idx + max_step)
+
+        for cut in range(low, high + 1):
+            prev_c = cues[cut - 1]
+            next_c = cues[cut]
+            gap_ms = max(0, next_c.start_ms - prev_c.end_ms)
+            txt = prev_c.source_text.strip()
+
+            # Score silence gap (cap at 4 seconds so huge pauses don't distort everything)
+            score = min(gap_ms, 4000) / 100.0  # 0 .. +40 pts
+            if gap_ms >= 1500:
+                score += 28.0
+            elif gap_ms >= 800:
+                score += 12.0
+            elif gap_ms < 120:
+                score -= 15.0  # Likely continuous speech!
+
+            if txt.endswith(_SENTENCE_END_CHARS):
+                score += 22.0
+            elif txt.endswith((",", "，", ";", "；", "—", "-")):
+                score -= 18.0  # Mid-clause continuation!
+
+            # Slight preference toward requested target_size
+            score -= abs((cut - idx) - target_size) * 2.2
+
+            if score > best_score:
+                best_score = score
+                best_cut = cut
+
+        batches.append(cues[idx:best_cut])
+        idx = best_cut
+
+    return batches
+
+
 async def _translate_single_batch(
     batch_cues: List[SubtitleCue],
     context_before: List[SubtitleCue],
     context_after: List[SubtitleCue],
     request: TranslateBatchRequest,
     settings: APISettings,
+    rolling_note: str = "",
 ) -> Tuple[Dict[int, str], str]:
     src_label = LANGUAGE_LABELS.get(request.source_language, request.source_language)
     tgt_label = LANGUAGE_LABELS.get(request.target_language, request.target_language)
@@ -433,11 +513,12 @@ async def _translate_single_batch(
 
     custom_rule = f"\n额外用户要求：{request.custom_prompt.strip()}" if request.custom_prompt.strip() else ""
     summary_rule = f"\n全片语境背景：{request.scene_summary.strip()}" if request.scene_summary.strip() else ""
+    rolling_rule = f"\n上一幕衔接状态：{rolling_note.strip()}" if rolling_note.strip() else ""
 
     if request.mode == "reflective":
         system_prompt = (
             f"你是顶尖的 Netflix 级双语字幕翻译与本地化审校专家，负责将字幕从「{src_label}」精翻为「{tgt_label}」。\n"
-            f"风格定位：{genre_guide}{summary_rule}{custom_rule}\n"
+            f"风格定位：{genre_guide}{summary_rule}{rolling_rule}{custom_rule}\n"
             f"强制术语表：\n{glossary_block}\n\n"
             "【核心翻译准则（直译→反思→地道意译）】\n"
             "1. 结合 `context_before`（上文及已译参考）与 `context_after`（下文预读）理解完整句子，妥善处理跨时间轴断句！若一句话拆在相邻两条字幕中，请按目标语言自然语序顺畅衔接，同时保证每条字幕对应自身时间段语义合理。\n"
@@ -557,9 +638,7 @@ async def stream_translate_cues(
     batch_size = max(1, min(30, settings.batch_size))
     ctx_win = max(0, min(10, settings.context_window))
 
-    batches: List[List[SubtitleCue]] = [
-        target_cues[i : i + batch_size] for i in range(0, total, batch_size)
-    ]
+    batches: List[List[SubtitleCue]] = partition_scene_batches(target_cues, target_size=batch_size)
 
     yield {
         "event": "start",
@@ -571,9 +650,10 @@ async def stream_translate_cues(
 
     working_cues = [c.model_copy(deep=True) for c in request.cues]
     completed = 0
+    rolling_note = ""
 
     if request.mode == "reflective" or settings.concurrency <= 1:
-        # Sequential sliding window so context_before includes freshly translated target_text!
+        # Sequential sliding window + rolling scene context!
         for b_idx, batch in enumerate(batches, start=1):
             first_pos = cue_map[batch[0].id]
             last_pos = cue_map[batch[-1].id]
@@ -590,7 +670,11 @@ async def stream_translate_cues(
                 "total": total,
             }
 
-            mapped, reflection = await _translate_single_batch(batch, before, after, request, settings)
+            mapped, reflection = await _translate_single_batch(
+                batch, before, after, request, settings, rolling_note=rolling_note
+            )
+            if reflection:
+                rolling_note = reflection[:240]
             batch_updates: List[Dict[str, Any]] = []
             for cue in batch:
                 if cue.id in mapped:

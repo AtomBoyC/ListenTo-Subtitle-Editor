@@ -77,6 +77,22 @@ def _run_smoke_test(base_url: str, marker_file: str = "") -> int:
         exported = json.loads(resp.read().decode("utf-8"))
         assert len(exported.get("files", [])) == 2, "Export file count mismatch"
 
+    batch_req = urllib.request.Request(
+        f"{base_url}/api/subtitles/export-batch-zip",
+        data=json.dumps(
+            {
+                "documents": [doc],
+                "formats": ["srt"],
+                "track_mode": "bilingual_tgt_top",
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(batch_req, timeout=5.0) as resp:
+        batch_out = json.loads(resp.read().decode("utf-8"))
+        assert batch_out.get("file_count") == 1, "Batch ZIP export file count mismatch"
+
     with urllib.request.urlopen(f"{base_url}/", timeout=5.0) as resp:
         html = resp.read().decode("utf-8")
         assert "听见 Studio" in html, "Frontend index.html failed to render"
@@ -138,10 +154,10 @@ def main() -> int:
             import webview  # type: ignore
 
             window = webview.create_window(
-                title="听见 Studio 2.0 · AI 双语字幕精修工作台",
+                title="听见 Studio 2.4 · AI 双语字幕精修与语音识别工作台",
                 url=base_url,
-                width=1360,
-                height=860,
+                width=1380,
+                height=880,
                 min_size=(980, 660),
                 text_select=True,
             )
