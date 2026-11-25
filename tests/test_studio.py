@@ -24,6 +24,32 @@ from server import app
 
 
 def _mock_openai_handler(request: httpx.Request) -> httpx.Response:
+    if request.method == "GET" and request.url.path.endswith("/models"):
+        if "generativelanguage.googleapis.com" in str(request.url):
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"name": "models/gemini-3.8-flash"},
+                        {"name": "models/gemini-3.5-flash"},
+                        {"name": "models/text-embedding-004"},
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "gpt-6.2-sol"},
+                    {"id": "gpt-6.2-astra"},
+                    {"id": "claude-sonnet-5-5"},
+                    {"id": "deepseek-v4-pro"},
+                    {"id": "text-embedding-3-large"},
+                    {"id": "whisper-1"},
+                ]
+            },
+        )
+
     body = json.loads(request.content.decode("utf-8"))
     user_msg = body["messages"][-1]["content"]
     sys_msg = body["messages"][0]["content"]
@@ -246,7 +272,29 @@ class StudioTestSuite(unittest.TestCase):
         }
 
         with patch("core.translator.httpx.AsyncClient", side_effect=mocked_client):
-            # 1. Test connection endpoint
+            # 1. Test connection endpoint & live /models discovery
+            m_resp = self.client.post("/api/settings/models", json=override)
+            self.assertEqual(m_resp.status_code, 200)
+            fetched = m_resp.json()["models"]
+            self.assertIn("gpt-6.2-sol", fetched)
+            self.assertIn("claude-sonnet-5-5", fetched)
+            self.assertNotIn("text-embedding-3-large", fetched)
+            self.assertNotIn("whisper-1", fetched)
+
+            gem_resp = self.client.post(
+                "/api/settings/models",
+                json={
+                    "provider_id": "gemini",
+                    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                    "api_key": "AIzaSyMockKey",
+                },
+            )
+            self.assertEqual(gem_resp.status_code, 200)
+            self.assertIn("gemini-3.8-flash", gem_resp.json()["models"])
+
+            meta_resp = self.client.get("/api/meta")
+            self.assertGreaterEqual(len(meta_resp.json()["presets"]), 12)
+
             t_resp = self.client.post("/api/settings/test", json=override)
             self.assertEqual(t_resp.status_code, 200)
             self.assertTrue(t_resp.json()["ok"])

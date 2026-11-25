@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>听见 Studio 2.0 · AI 双语字幕精修工作台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2.1.0" />
+  <link rel="stylesheet" href="/static/styles.css?v=2.2.0" />
 </head>
 <body>
   <div id="app" class="studio-shell">
@@ -317,18 +317,18 @@
 
     <!-- Modal: AI Engine Settings -->
     <div class="modal-backdrop" id="modal-settings" hidden>
-      <div class="modal-card">
+      <div class="modal-card modal-card-wide">
         <div class="modal-header">
           <div>
             <h2>⚙️ AI 翻译引擎设置</h2>
-            <p class="modal-sub">配置自动加密保存在本机 <code>.data/settings.json</code>，重启无需重复输入</p>
+            <p class="modal-sub">涵盖 13 家主流平台最新模型预设，支持一键从接口实时拉取全部可用模型列表</p>
           </div>
           <button class="btn btn-icon" data-close-modal="modal-settings" type="button">✕</button>
         </div>
 
         <div class="modal-body">
           <div class="field-group">
-            <label class="field-label">服务商预设（一键填充地址与推荐模型）</label>
+            <label class="field-label">服务商预设（一键填充地址与最新旗舰模型）</label>
             <div class="provider-grid" id="provider-grid"></div>
             <p class="provider-hint" id="provider-hint"></p>
           </div>
@@ -339,17 +339,27 @@
               <input id="cfg-base-url" class="input-full" type="text" placeholder="https://api.deepseek.com/v1" />
             </div>
             <div class="field-group">
-              <label class="field-label" for="cfg-model">模型名称 (Model)</label>
-              <div class="model-input-wrap">
-                <input id="cfg-model" class="input-full" type="text" list="cfg-model-datalist" placeholder="deepseek-chat" />
-                <datalist id="cfg-model-datalist"></datalist>
-              </div>
+              <label class="field-label" for="cfg-api-key">API Key 密钥 <span id="cfg-key-saved-badge" class="saved-badge" hidden>已保存密钥</span></label>
+              <input id="cfg-api-key" class="input-full" type="password" autocomplete="off" placeholder="sk-...（留空则保持已保存密钥）" />
             </div>
           </div>
 
           <div class="field-group">
-            <label class="field-label" for="cfg-api-key">API Key 密钥 <span id="cfg-key-saved-badge" class="saved-badge" hidden>已保存密钥</span></label>
-            <input id="cfg-api-key" class="input-full" type="password" autocomplete="off" placeholder="sk-...（留空则保持已保存的密钥不变）" />
+            <label class="field-label" for="cfg-model">模型名称 (Model · 可直接输入任意模型 ID，或点击下方列表选择)</label>
+            <div class="model-input-row">
+              <input id="cfg-model" class="input-full" type="text" autocomplete="off" placeholder="例如：deepseek-flash / gpt-6.2-sol / claude-sonnet-5-5 / gemini-3.5-flash" />
+              <button class="btn btn-subtle" id="btn-fetch-models" type="button" title="调用当前 API 的 /models 接口实时获取账号支持的全部模型">
+                🔄 实时拉取可用模型
+              </button>
+            </div>
+
+            <div class="model-picker-box" id="model-picker-box">
+              <div class="model-picker-top">
+                <span class="model-source-badge" id="model-list-badge">内置推荐模型</span>
+                <input id="cfg-model-filter" class="input-compact model-filter-input" type="text" placeholder="🔍 搜索过滤模型名 (如 flash / pro / qwen / gpt / claude)…" />
+              </div>
+              <div class="model-chip-list" id="model-chip-list"></div>
+            </div>
           </div>
 
           <div class="form-row-3">
@@ -473,6 +483,6 @@
     <div class="toast-stack" id="toast-stack"></div>
   </div>
 
-  <script src="/static/app.js?v=2.1.0" defer></script>
+  <script src="/static/app.js?v=2.2.0" defer></script>
 </body>
 </html>

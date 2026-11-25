@@ -71,6 +71,118 @@ def build_chat_endpoint(base_url: str) -> str:
     return f"{cleaned}/chat/completions"
 
 
+def build_models_endpoint(base_url: str) -> str:
+    cleaned = (base_url or "").strip().rstrip("/")
+    if not cleaned:
+        raise LLMTranslationError("请先填写 API Base URL。")
+    parsed = urlsplit(cleaned)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise LLMTranslationError("API Base URL 格式不正确，需以 https:// 或 http:// 开头。")
+    if cleaned.endswith("/chat/completions"):
+        cleaned = cleaned[: -len("/chat/completions")]
+    if cleaned.endswith("/models"):
+        return cleaned
+    return f"{cleaned}/models"
+
+
+def _build_auth_headers(endpoint: str, api_key: str) -> Dict[str, str]:
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    key = (api_key or "").strip()
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+        if "anthropic.com" in endpoint.lower():
+            headers["x-api-key"] = key
+            headers["anthropic-version"] = "2023-06-01"
+    return headers
+
+
+_NON_CHAT_MODEL_KEYWORDS = (
+    "embedding",
+    "whisper",
+    "tts-",
+    "tts1",
+    "dall-e",
+    "moderation",
+    "rerank",
+    "bge-",
+    "canary-",
+    "imagen-",
+    "veo-",
+)
+
+
+async def fetch_available_models(settings: APISettings) -> Dict[str, Any]:
+    """Query the provider's /models endpoint to discover all live available LLM models."""
+    models_url = build_models_endpoint(settings.base_url)
+    is_local = _is_local_url(models_url)
+    is_public_catalog = "openrouter.ai" in models_url.lower()
+    if not is_local and not is_public_catalog and not settings.api_key.strip():
+        raise LLMTranslationError("请先填入 API Key，再点击「实时拉取模型」。")
+
+    headers = _build_auth_headers(models_url, settings.api_key)
+    headers.pop("Content-Type", None)
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(20.0, connect=10.0),
+        trust_env=not is_local,
+        follow_redirects=True,
+    ) as client:
+        try:
+            resp = await client.get(models_url, headers=headers)
+        except httpx.RequestError as exc:
+            raise LLMTranslationError(f"无法连接模型列表接口（{models_url}）：{exc}") from exc
+
+    if resp.status_code in (401, 403):
+        raise LLMTranslationError("API Key 验证失败或无权限访问 /models 接口（HTTP 401/403）。")
+    if resp.status_code >= 400:
+        raise LLMTranslationError(f"服务商未返回模型列表（HTTP {resp.status_code}），你仍可直接在输入框手动填写任意模型名。")
+
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        raise LLMTranslationError("模型列表接口返回的不是有效 JSON。") from exc
+
+    raw_items: List[Any] = []
+    if isinstance(payload, dict):
+        if isinstance(payload.get("data"), list):
+            raw_items = payload["data"]
+        elif isinstance(payload.get("models"), list):
+            raw_items = payload["models"]
+    elif isinstance(payload, list):
+        raw_items = payload
+
+    extracted: List[str] = []
+    seen = set()
+    for item in raw_items:
+        mid = ""
+        if isinstance(item, str):
+            mid = item.strip()
+        elif isinstance(item, dict):
+            mid = str(item.get("id") or item.get("name") or "").strip()
+        if not mid:
+            continue
+        if mid.startswith("models/") and "generativelanguage.googleapis.com" in models_url:
+            mid = mid[len("models/") :]
+        lower = mid.lower()
+        if any(skip in lower for skip in _NON_CHAT_MODEL_KEYWORDS):
+            continue
+        if mid not in seen:
+            seen.add(mid)
+            extracted.append(mid)
+
+    if not extracted:
+        raise LLMTranslationError("接口返回了空的对话模型列表，请手动输入模型名称。")
+
+    return {
+        "models": extracted,
+        "count": len(extracted),
+        "endpoint": models_url,
+    }
+
+
 def extract_json_payload(raw_text: str) -> Any:
     """Robustly extract JSON object or array even when wrapped in <think> blocks or markdown fences."""
     if not raw_text or not raw_text.strip():
@@ -123,12 +235,7 @@ async def _call_chat_completion(
     if not settings.model.strip():
         raise LLMTranslationError("尚未填写模型名称（例如 deepseek-chat 或 gpt-4o-mini）。")
 
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    if settings.api_key.strip():
-        headers["Authorization"] = f"Bearer {settings.api_key.strip()}"
+    headers = _build_auth_headers(endpoint, settings.api_key)
 
     payload: Dict[str, Any] = {
         "model": settings.model.strip(),
@@ -139,9 +246,9 @@ async def _call_chat_completion(
     # Reasoning models or some local gateways reject response_format; we gracefully retry without it if 400.
     model_lower = settings.model.lower()
     supports_json_mode = use_json_mode and not any(
-        tag in model_lower for tag in ("reasoner", "r1", "qwq", "o1-", "o3-")
+        tag in model_lower for tag in ("reasoner", "r1", "qwq", "thinking", "fable", "o1-", "o3", "o4", "grok-420")
     )
-    if supports_json_mode:
+    if supports_json_mode and "anthropic.com" not in endpoint.lower():
         payload["response_format"] = {"type": "json_object"}
 
     async with httpx.AsyncClient(

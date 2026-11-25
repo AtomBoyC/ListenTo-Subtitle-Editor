@@ -316,6 +316,53 @@
     }
   }
 
+  let gridCurrentProvider = "deepseek";
+  let currentCandidateModels = [];
+  let isLiveFetchedModels = false;
+
+  function renderModelPickerChips() {
+    const chipWrap = $("model-chip-list");
+    const badge = $("model-list-badge");
+    if (!chipWrap || !badge) return;
+
+    const filterKw = ($("cfg-model-filter")?.value || "").trim().toLowerCase();
+    const activeModel = ($("cfg-model")?.value || "").trim();
+
+    const filtered = filterKw
+      ? currentCandidateModels.filter((m) => m.toLowerCase().includes(filterKw))
+      : currentCandidateModels;
+
+    badge.className = `model-source-badge${isLiveFetchedModels ? " live" : ""}`;
+    badge.textContent = isLiveFetchedModels
+      ? `✅ 已从接口实时拉取 (${filtered.length}/${currentCandidateModels.length})`
+      : `内置最新推荐模型 (${filtered.length})`;
+
+    chipWrap.innerHTML = "";
+    if (!filtered.length) {
+      const tip = document.createElement("div");
+      tip.className = "model-empty-tip";
+      tip.textContent = currentCandidateModels.length
+        ? "无匹配过滤词的模型，可直接上方输入框填写任意模型 ID。"
+        : "填入地址与 API Key 后点击右上侧「🔄 实时拉取可用模型」，或直接在上方输入框手填模型名。";
+      chipWrap.appendChild(tip);
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    filtered.slice(0, 300).forEach((modelId) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `model-chip${modelId === activeModel ? " active" : ""}`;
+      btn.textContent = modelId;
+      btn.addEventListener("click", () => {
+        $("cfg-model").value = modelId;
+        renderModelPickerChips();
+      });
+      frag.appendChild(btn);
+    });
+    chipWrap.appendChild(frag);
+  }
+
   function selectProviderPreset(providerId, overwriteFields = false) {
     const presets = state.meta?.presets || [];
     const preset = presets.find((p) => p.id === providerId) || presets[0];
@@ -326,21 +373,17 @@
     });
     $("provider-hint").textContent = preset.doc_hint || "";
 
-    const datalist = $("cfg-model-datalist");
-    datalist.innerHTML = "";
-    for (const m of preset.models || []) {
-      const opt = document.createElement("option");
-      opt.value = m;
-      datalist.appendChild(opt);
-    }
+    gridCurrentProvider = preset.id;
+    currentCandidateModels = Array.isArray(preset.models) ? [...preset.models] : [];
+    isLiveFetchedModels = false;
+    if ($("cfg-model-filter")) $("cfg-model-filter").value = "";
 
     if (overwriteFields) {
       $("cfg-base-url").value = preset.base_url;
       $("cfg-model").value = preset.default_model;
     }
-    gridCurrentProvider = preset.id;
+    renderModelPickerChips();
   }
-  let gridCurrentProvider = "deepseek";
 
   function refreshApiStatusUI() {
     if (!state.settings) return;
@@ -1216,6 +1259,7 @@
       $("cfg-context-win").value = state.settings.context_window || 4;
       $("cfg-concurrency").value = state.settings.concurrency || 2;
       $("cfg-test-result").hidden = true;
+      renderModelPickerChips();
     }
     if (id === "modal-export") {
       $("export-result-box").hidden = true;
@@ -1519,6 +1563,38 @@
 
     document.querySelectorAll("[data-close-modal]").forEach((btn) => {
       btn.addEventListener("click", () => closeModal(btn.dataset.closeModal));
+    });
+
+    $("cfg-model").addEventListener("input", () => renderModelPickerChips());
+    $("cfg-model-filter").addEventListener("input", () => renderModelPickerChips());
+
+    $("btn-fetch-models").addEventListener("click", async () => {
+      const btn = $("btn-fetch-models");
+      const origText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "⏳ 正在拉取…";
+      try {
+        const resp = await fetch("/api/settings/models", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(collectSettingsForm()),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "拉取模型失败");
+        currentCandidateModels = data.models || [];
+        isLiveFetchedModels = true;
+        if ($("cfg-model-filter")) $("cfg-model-filter").value = "";
+        if (currentCandidateModels.length && !$("cfg-model").value.trim()) {
+          $("cfg-model").value = currentCandidateModels[0];
+        }
+        renderModelPickerChips();
+        toast(`成功从接口拉取 ${data.count} 个可用模型！`, "success");
+      } catch (err) {
+        toast(err.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
     });
 
     $("btn-test-api").addEventListener("click", async () => {

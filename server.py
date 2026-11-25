@@ -48,6 +48,7 @@ from core.translator import (
     LANGUAGE_LABELS,
     LLMTranslationError,
     extract_glossary_and_summary,
+    fetch_available_models,
     rewrite_single_cue,
     stream_translate_cues,
     test_api_connection,
@@ -152,6 +153,15 @@ async def test_settings(payload: APISettingsUpdate) -> Dict[str, Any]:
     try:
         result = await test_api_connection(effective)
         return result
+    except LLMTranslationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/settings/models")
+async def list_remote_models(payload: APISettingsUpdate) -> Dict[str, Any]:
+    effective = resolve_effective_settings(payload)
+    try:
+        return await fetch_available_models(effective)
     except LLMTranslationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -69,7 +69,7 @@ class APISettings(BaseModel):
     provider_id: str = "deepseek"
     base_url: str = "https://api.deepseek.com/v1"
     api_key: str = ""
-    model: str = "deepseek-chat"
+    model: str = "deepseek-flash"
     temperature: float = Field(default=0.25, ge=0.0, le=1.5)
     batch_size: int = Field(default=12, ge=1, le=30)
     context_window: int = Field(default=4, ge=0, le=10)
