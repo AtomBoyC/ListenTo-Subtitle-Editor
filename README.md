@@ -1,3 +1,12 @@
+> [!IMPORTANT]
+> ### 🚀 本项目已全面重构升级并迁移至新仓库：**[AtomBoyC/ListenTo-Studio](https://github.com/AtomBoyC/ListenTo-Studio)**
+>
+> - **最新版 3.0（内置 FFmpeg 降噪抽音轨 + 声学 VAD 切片 + Google Gemini / OpenAI 长视频无字幕听译工作台）**：👉 **[前往新仓库 AtomBoyC/ListenTo-Studio](https://github.com/AtomBoyC/ListenTo-Studio)**
+> - **开袋即食单文件桌面版下载**：👉 **[前往新仓库 Releases 下载 ListenTo-Studio.exe / .dmg](https://github.com/AtomBoyC/ListenTo-Studio/releases/latest)**
+> - 本仓库的 `v1.0` 与 `v2.5` 历史代码已完整合并至新仓库的 [`legacy-v1`](https://github.com/AtomBoyC/ListenTo-Studio/tree/legacy-v1) 与 [`legacy-v2`](https://github.com/AtomBoyC/ListenTo-Studio/tree/legacy-v2) 分支，本旧仓库现已锁定为只读归档。
+
+---
+
 # 听见 Studio 2.5 · AI 双语字幕精修与语音识别工作台
 
 > 由原 Windows `Tkinter + Argos` 批处理字幕工具全面重构升级而来，融合了 **VideoLingo / llm-subtrans** 的静音感知动态分批与上下文反思精翻管线、**SenseVoice / Whisper** 音视频语音识别、**SubPlayer / Subtitle Edit** 的交互声波打轴条与时间轴体检，以及 **SmartSub** 的多集队列批量精翻与一键打包体验。
